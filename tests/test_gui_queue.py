@@ -725,7 +725,7 @@ def test_worker_manual_copies_script_and_cleans_on_cancel(tmp_path):
     w.ask.connect(lambda kind, payload: (asked.append((kind, payload)), w.answer(Path("vi.txt"))))
     assert w._manual_translate(script, 1, False, None) == Path("vi.txt")
     dest = tmp_path / "out" / "clip_zh.txt"
-    assert dest.read_text() == script.read_text()
+    assert dest.read_text(encoding="utf-8") == script.read_text(encoding="utf-8")
     assert asked[0][0] == "manual" and asked[0][1]["script"] == dest
     assert w._created == [dest]
 
@@ -871,7 +871,7 @@ def test_worker_writes_error_report(tmp_path, monkeypatch):
     w.error_report.connect(lambda text, path: got.append((text, path)))
     w.run()
     text, path = got[0]
-    assert Path(path).parent == tmp_path / "errors" and Path(path).read_text() == text
+    assert Path(path).parent == tmp_path / "errors" and Path(path).read_text(encoding="utf-8") == text
     assert "render failed: codec missing" in text and "Traceback" in text
     assert '"translator": "groq"' in text and "clip.mp4" in text
     assert "gsk_secret_value" not in text
@@ -931,7 +931,7 @@ def test_demo_button_generates_and_plays(win, monkeypatch, tmp_path):
     while (opts._demo_task is not None or opts._demo_player is None) and time.time() < end:
         QApplication.processEvents(); time.sleep(0.01)
     assert asked == [("piper", opts._default_piper)]
-    assert opts._demo_player.source().toLocalFile() == str(wav)
+    assert Path(opts._demo_player.source().toLocalFile()) == wav
     assert opts._btn_demo.text() == "▶ Nghe thử" and opts._btn_demo.isEnabled()
     opts._demo_player.stop()
 
