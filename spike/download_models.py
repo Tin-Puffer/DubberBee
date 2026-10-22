@@ -221,6 +221,10 @@ def find_funasr_exe() -> Path | None:
 
 
 def main() -> None:
+    # Windows: a piped / redirected stdout is cp1252 and can't print "──", "✓"…
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--voice", action="append", choices=list(PIPER_VOICES),
