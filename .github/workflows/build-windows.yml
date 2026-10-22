@@ -65,6 +65,15 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
+          $m = "dist\Dubber\_internal\resources\models"
+          foreach ($need in "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\model.int8.onnx",
+                            "fsmn-vad\model_quant.onnx", "silero_vad.onnx",
+                            "uvr\UVR-MDX-NET-Inst_HQ_5.onnx", "vieneu") {
+            if (-not (Test-Path "$m\$need")) { throw "missing in bundle: $need" }
+          }
+          $voices = (Get-ChildItem "$m\piper" -Filter *.onnx).Count
+          if ($voices -lt 16) { throw "only $voices piper voices bundled" }
+          Get-ChildItem $m | ForEach-Object { "{0,-60} {1,8:N0} MB" -f $_.Name, ((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB) }
           $p = Start-Process dist\Dubber\Dubber.exe -PassThru
           Start-Sleep -Seconds 45
           if ($p.HasExited) { throw "Dubber.exe exited early (code $($p.ExitCode))" }

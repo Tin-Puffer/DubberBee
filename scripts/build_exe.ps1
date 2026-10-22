@@ -118,9 +118,18 @@ if (-not $bundled_ff -or -not (Has-Ass $bundled_ff.FullName)) { throw "Bundled f
 Write-Host "[5/5] Zipping..." -ForegroundColor Yellow
 $zip = "dist\Dubber-windows.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
-# bsdtar (built into Windows 10+) writes zip64; Compress-Archive breaks on > 2 GB
-tar.exe -a -c -f $zip -C dist Dubber
-if ($LASTEXITCODE -ne 0) { throw "zip failed" }
+# Windows' own bsdtar writes zip64 (Compress-Archive breaks on > 2 GB). Call it by full
+# path: Git for Windows puts GNU tar on PATH, which cannot write zip.
+$bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
+& $bsdtar -a -c -f $zip -C dist Dubber
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "      tar failed - falling back to .NET ZipFile"
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path $app).Path,
+        (Join-Path $project_root $zip), [System.IO.Compression.CompressionLevel]::Optimal, $true)
+}
+if (-not (Test-Path $zip)) { throw "zip failed" }
 
 Write-Host ""
 Write-Host "=== Build complete ===" -ForegroundColor Green
