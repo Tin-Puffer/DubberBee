@@ -269,7 +269,8 @@ python scripts/eval_asr.py video.mp4 --vad fsmn --split timestamps --vocals on
 
 # Build
 bash scripts/build_exe_mac.sh            # dist/Dubber.app + dist/Dubber-macos.zip (~3,7 GB / 2,1 GB)
-.\scripts\build_exe.ps1                  # dist\Dubber\Dubber.exe
+.\scripts\build_exe.ps1                  # dist\Dubber\Dubber.exe + dist\Dubber-windows.zip
+                                         # (hoặc GitHub Actions: .github/workflows/build-windows.yml)
 ```
 
 **Model** được mirror ở Release `models-v1` của repo
@@ -285,7 +286,8 @@ bash scripts/build_exe_mac.sh            # dist/Dubber.app + dist/Dubber-macos.z
 FSMN-VAD, Silero, giọng Piper, model VieNeu, model UVR + 3 file danh sách model (để tách nhạc
 chạy offline), torch/transformers, audio-separator (+ torchvision vì `onnx2torch` cần, PIL,
 pandas), VieNeu SDK. Loại trừ: gradio, torchaudio, công cụ dev. Bản build đã kiểm tra chạy
-offline (`HF_HUB_OFFLINE=1`) trên macOS; bản Windows chưa build lại sau M9.
+offline (`HF_HUB_OFFLINE=1`) trên macOS. PySide6 chỉ gom QtCore/Gui/Widgets/Multimedia
+(trước đây `collect_all` kéo cả WebEngine/3D/QML, thừa ~450 MB).
 
 ---
 
@@ -333,7 +335,8 @@ phân phối thương mại.
 - Clone giọng dùng tối đa 8 s mẫu (giới hạn SDK); không fine-tune.
 - Hộp thoại *Thư mục làm việc*: trong bản build, dòng "Model đã tải" trỏ thư mục user-data
   (model thật nằm trong app).
-- Bản Windows chưa build và kiểm tra lại sau M9.
+- Bản Windows build trên GitHub Actions (test + khởi động thử), chưa chạy thử pipeline đầy đủ
+  trên máy Windows thật.
 - GUI không xử lý SIGTERM: vòng lặp sự kiện Qt chặn, nên handler tín hiệu của Python không
   chạy — `kill` / `pkill` không đóng được app (Cmd + Q thì được). Khắc phục được bằng cách đăng
   ký `signal.signal(SIGTERM, …)` gọi `QApplication.quit()` kèm một `QTimer` định kỳ để trình

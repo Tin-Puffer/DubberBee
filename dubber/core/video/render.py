@@ -43,7 +43,7 @@ def _detect_hw_encoder(ffmpeg: Path) -> str:
     """Detect best available H.264 encoder on this machine."""
     result = subprocess.run(
         [str(ffmpeg), "-encoders", "-v", "quiet"],
-        capture_output=True, text=True, **no_window(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
     )
     encoders = result.stdout
 
@@ -149,7 +149,7 @@ class VideoRenderer:
             "Muxing dubbed video (orig=%.0f%%) → %s",
             orig_volume * 100, output_path.name,
         )
-        result = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg mux failed:\n{result.stderr[-2000:]}")
         size_mb = output_path.stat().st_size / 1024 / 1024
@@ -305,7 +305,7 @@ class VideoRenderer:
             str(output_path),
         ]
         log.info("Copying video → %s", output_path.name)
-        result = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
         if result.returncode != 0:
             raise RuntimeError(
                 f"FFmpeg video copy failed:\n{result.stderr[-2000:]}"

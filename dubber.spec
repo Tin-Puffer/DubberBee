@@ -3,7 +3,7 @@
 #
 # Build:  scripts\build_exe.ps1        (Windows) → dist\Dubber\Dubber.exe
 #         scripts/build_exe_mac.sh      (macOS)   → dist/Dubber.app
-# One-directory bundle, ~2 GB
+# One-directory bundle, ~3 GB (models ~1.8 GB)
 #
 # What's included:
 #   - dubber Python package
@@ -19,7 +19,7 @@
 #     (in resources/models/)
 #
 # Note: HuggingFace models (MarianMT ~300MB, NLLB 1.3B ~5.5GB) download on first use
-#       and are cached in %USERPROFILE%\.cache\huggingface\
+#       and are cached in ~/.cache/huggingface (Windows: %USERPROFILE%\.cache\huggingface)
 #
 # What's NOT included:
 #   - torchaudio
@@ -35,7 +35,6 @@ project_root = Path(SPECPATH)
 # ── Collect packages ───────────────────────────────────────────────────────────
 sherpa_datas,       sherpa_binaries,       sherpa_hiddenimports       = collect_all('sherpa_onnx')
 piper_datas,        piper_binaries,        piper_hiddenimports        = collect_all('piper')
-pyside_datas,       pyside_binaries,       pyside_hiddenimports       = collect_all('PySide6')
 torch_datas,        torch_binaries,        torch_hiddenimports        = collect_all('torch')
 transformers_datas, transformers_binaries, transformers_hiddenimports = collect_all('transformers')
 
@@ -47,6 +46,13 @@ for _pkg in ('audio_separator', 'torchvision', 'vieneu', 'vieneu_utils', 'sea_g2
     extra_datas += _d; extra_binaries += _b; extra_hiddenimports += _h
 # keyring finds its OS backends (Keychain / Credential Manager) through entry points
 extra_datas += copy_metadata('keyring')
+IS_WIN = sys.platform == 'win32'
+if IS_WIN:
+    extra_hiddenimports += ['keyring.backends.Windows', 'win32ctypes.core']
+
+# PySide6: only the Qt modules the app imports (PyInstaller's own hooks collect their
+# plugins). collect_all('PySide6') pulled every Qt module — WebEngine, 3D, QML… ~450 MB.
+QT_MODULES = ['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtMultimedia']
 
 # Explicitly add sherpa-onnx DLLs (belt-and-suspenders — collect_all may miss them)
 import sherpa_onnx as _sp
@@ -88,9 +94,9 @@ if _models_root.exists():
 a = Analysis(
     ['dubber/__main__.py'],
     pathex=[str(project_root)],
-    binaries=(sherpa_binaries + extra_sherpa_bins + piper_binaries + pyside_binaries
+    binaries=(sherpa_binaries + extra_sherpa_bins + piper_binaries
               + ffmpeg_bins + torch_binaries + transformers_binaries + extra_binaries),
-    datas=(sherpa_datas + piper_datas + pyside_datas + model_datas + ffmpeg_mac_datas + font_datas
+    datas=(sherpa_datas + piper_datas + model_datas + ffmpeg_mac_datas + font_datas
            + torch_datas + transformers_datas + extra_datas),
     hiddenimports=[
         # Dynamic imports in pipeline / translators
@@ -113,7 +119,7 @@ a = Analysis(
         'platformdirs', 'soundfile', 'resampy', 'cffi', 'pycparser',
         *sherpa_hiddenimports,
         *piper_hiddenimports,
-        *pyside_hiddenimports,
+        *QT_MODULES,
         *torch_hiddenimports,
         *transformers_hiddenimports,
         *extra_hiddenimports,
@@ -131,6 +137,10 @@ a = Analysis(
         'pytest', 'IPython', 'matplotlib',
         'notebook', 'sphinx', 'sklearn', 'cv2',
         'tensorflow', 'jax',
+        # Qt modules the app never uses (some packages import them optionally)
+        'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtQml',
+        'PySide6.QtQuick', 'PySide6.Qt3DCore', 'PySide6.QtPdf', 'PySide6.QtCharts',
+        'PySide6.QtDesigner', 'PyQt5', 'PyQt6', 'tkinter',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -151,7 +161,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,          # No terminal window (windowed GUI app)
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -168,14 +178,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
-    upx_exclude=[
-        'onnxruntime.dll',       # large native DLL — UPX may corrupt it
-        'sherpa-onnx-c-api.dll',
-        'Qt6Core.dll',           # Qt DLLs should not be UPX-compressed
-        'Qt6Gui.dll',
-        'Qt6Widgets.dll',
-    ],
+    upx=False,   # UPX corrupts torch / onnxruntime / Qt DLLs
     name='Dubber',
 )
 

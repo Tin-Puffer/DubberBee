@@ -1,0 +1,92 @@
+# Build the Windows bundle (dist\Dubber-windows.zip) on a Windows runner.
+# PyInstaller cannot cross-compile, so the Mac build stays local (scripts/build_exe_mac.sh).
+#
+# Runs on every push to main-windown-edition, or by hand (Actions → Build Windows → Run).
+# The zip is kept as a workflow artifact and, when RELEASE_TAG names an existing
+# release, uploaded to it.
+name: Build Windows
+
+on:
+  push:
+    branches: [main-windown-edition]
+  workflow_dispatch:
+
+env:
+  RELEASE_TAG: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: FFmpeg (Gyan full build — has libass)
+        shell: pwsh
+        run: |
+          $dst = "$env:RUNNER_TEMP\ffmpeg"
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z -OutFile "$dst.7z"
+          7z x "$dst.7z" "-o$dst" -y | Out-Null
+          $bin = (Get-ChildItem $dst -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          & "$bin\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          "FFMPEG_DIR=$bin" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "$bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Python packages
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install -e ".[dev,offline,vieneu]"
+
+      - name: Models (ASR, VAD, 16 voices, VieNeu, UVR)
+        shell: pwsh
+        run: .venv\Scripts\python.exe spike\download_models.py --all
+
+      - name: Tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .venv\Scripts\python.exe -m pytest -q
+
+      - name: Build
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
+
+      - name: Smoke test (frozen app starts and stays up)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process dist\Dubber\Dubber.exe -PassThru
+          Start-Sleep -Seconds 45
+          if ($p.HasExited) { throw "Dubber.exe exited early (code $($p.ExitCode))" }
+          Stop-Process $p -Force
+          $log = Get-ChildItem "$env:LOCALAPPDATA\dubber" -Recurse -Filter dubber.log -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($log) { Get-Content $log.FullName -Tail 30 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dubber-windows
+          path: dist/Dubber-windows.zip
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $size = (Get-Item dist\Dubber-windows.zip).Length
+          Write-Host "Zip: $([math]::Round($size / 1MB)) MB"
+          if ($size -ge 2GB) { Write-Warning "Zip >= 2 GiB: too big for a release asset (artifact only)"; exit 0 }
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -ne 0) { Write-Host "No release $env:RELEASE_TAG - artifact only"; exit 0 }
+          gh release upload $env:RELEASE_TAG dist\Dubber-windows.zip --clobber

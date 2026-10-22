@@ -97,7 +97,7 @@ def probe_info(path: Path) -> VideoInfo:
     from dubber.core.utils.ffmpeg_locator import find_ffprobe, no_window
     out = subprocess.run(
         [str(find_ffprobe()), "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)],
-        capture_output=True, text=True, **no_window(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
     )
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip()[-300:] or "ffprobe failed")

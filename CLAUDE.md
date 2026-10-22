@@ -119,9 +119,12 @@ Chạy sau khi setup xong. Script tự copy FFmpeg + models vào `resources/` r�
 bash scripts/build_exe_mac.sh
 ```
 ```powershell
-# Windows → dist\Dubber\Dubber.exe
-.\scripts\build_exe.ps1
+# Windows → dist\Dubber\Dubber.exe + dist\Dubber-windows.zip
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
 ```
+
+Không build chéo được: bản Windows build trên GitHub Actions (`.github/workflows/build-windows.yml`,
+chạy khi push nhánh `main-windown-edition`) → artifact `Dubber-windows` + đính vào Release `v0.1.0`.
 
 Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chuột phải → Open.
 

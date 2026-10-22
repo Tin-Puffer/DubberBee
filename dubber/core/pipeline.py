@@ -162,7 +162,7 @@ class Pipeline:
         result = subprocess.run(
             [str(self.ffmpeg), "-y", "-i", str(vocals), "-ac", "1", "-ar", "16000",
              "-c:a", "pcm_s16le", str(vocals_16k)],
-            capture_output=True, text=True, **no_window(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
         )
         if result.returncode != 0:
             log.warning("Vocal stem conversion failed — ASR runs on the original audio")
@@ -662,7 +662,7 @@ def _mix_two_tracks(
         "-map", "[aout]",
         str(out),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
     if result.returncode != 0:
         raise RuntimeError(f"Audio track mixing failed:\n{result.stderr[-2000:]}")
     return out

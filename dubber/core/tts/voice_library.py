@@ -129,7 +129,7 @@ def prepare_reference(src: Path, dst: Path, start_s: float = 0.0,
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = [str(find_ffmpeg()), "-y", "-ss", f"{max(0.0, start_s):.3f}", "-i", str(src),
            "-t", f"{max_s:.3f}", "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", str(dst)]
-    r = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
     if r.returncode != 0 or not dst.exists():
         raise RuntimeError(f"Không đọc được âm thanh từ {src.name}:\n{r.stderr[-800:]}")
     with wave.open(str(dst), "rb") as wf:

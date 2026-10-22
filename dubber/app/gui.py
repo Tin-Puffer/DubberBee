@@ -277,7 +277,7 @@ class PipelineWorker(QObject):
                     if self.trim_end is not None:
                         cmd += ["-to", str(self.trim_end)]
                     cmd += ["-c", "copy", str(part)]
-                    result = _sp.run(cmd, capture_output=True, text=True, **no_window())
+                    result = _sp.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
                     if result.returncode != 0:
                         raise RuntimeError(
                             f"FFmpeg trim thất bại:\n{result.stderr[-2000:]}"
@@ -1520,7 +1520,8 @@ class OutputPanel(QGroupBox):
         self._save()
 
     def _browse(self):
-        start = self._edit_dir.text() or str(Path.home() / "Movies")
+        start = self._edit_dir.text() or str(Path.home() / ("Videos" if sys.platform == "win32"
+                                                            else "Movies"))
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu video", start)
         if d:
             self._edit_dir.setText(d)

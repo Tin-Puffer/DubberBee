@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
@@ -36,7 +36,7 @@ class ErrorDialog(QDialog):
         self.details = QPlainTextEdit(self)
         self.details.setReadOnly(True)
         self.details.setPlainText(self._text)
-        self.details.setFont(QFont("Menlo", 11))
+        self.details.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))  # Menlo / Consolas
         lay.addWidget(self.details, 1)
 
         if self._path:

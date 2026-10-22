@@ -1,4 +1,4 @@
-# setup_dev.ps1 - Cài môi trường phát triển cho dự án dubber (Windows, máy mới)
+﻿# setup_dev.ps1 - Cài môi trường phát triển cho dự án dubber (Windows, máy mới)
 # Chạy: powershell -ExecutionPolicy Bypass -File setup_dev.ps1
 #       (thêm -AllVoices để tải đủ 16 giọng, -All để tải mọi model: 16 giọng + VieNeu ~2 GB)
 # Sau đó: .\.venv\Scripts\Activate.ps1 ; python -m dubber

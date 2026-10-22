@@ -27,7 +27,7 @@ class AudioExtractor:
             "-show_format",
             str(video_path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, **no_window())
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, **no_window())
         data = json.loads(result.stdout)
 
         duration = float(data["format"].get("duration", 0))
@@ -94,7 +94,7 @@ class AudioExtractor:
             str(output_wav),
         ]
         log.info("Extracting stereo audio → %s", output_wav.name)
-        result = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg stereo extraction failed:\n{result.stderr[-2000:]}")
         log.info("Stereo audio: %s  (%.1f MB)", output_wav.name, output_wav.stat().st_size / 1024 / 1024)
@@ -114,7 +114,7 @@ class AudioExtractor:
             str(output_wav),
         ]
         log.info("Extracting audio → %s", output_wav.name)
-        result = subprocess.run(cmd, capture_output=True, text=True, **no_window())
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
         if result.returncode != 0:
             raise RuntimeError(
                 f"FFmpeg audio extraction failed:\n{result.stderr[-2000:]}"

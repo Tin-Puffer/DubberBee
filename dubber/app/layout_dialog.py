@@ -36,7 +36,7 @@ def probe_video(path: Path) -> tuple[int, int, float]:
     out = subprocess.run(
         [str(find_ffprobe()), "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, **no_window(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
     )
     data = json.loads(out.stdout or "{}")
     st = (data.get("streams") or [{}])[0]

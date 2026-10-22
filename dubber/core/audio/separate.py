@@ -228,7 +228,7 @@ def _probe_channels(audio_wav: Path, ffmpeg: Path) -> int:
     result = subprocess.run(
         [str(ffprobe), "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=channels", "-of", "csv=p=0", str(audio_wav)],
-        capture_output=True, text=True, **no_window(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
     )
     try:
         return int(result.stdout.strip())

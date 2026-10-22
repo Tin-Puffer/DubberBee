@@ -35,7 +35,8 @@ Tài liệu kỹ thuật cho người phát triển: xem [TECHNICAL.md](TECHNICA
 - **macOS:** giải nén `Dubber-macos.zip`, kéo `Dubber.app` vào thư mục *Applications*.
   Lần đầu mở: **chuột phải vào Dubber.app → Mở (Open) → Mở** (app chưa được Apple chứng nhận,
   nên bấm đúp lần đầu sẽ bị chặn). Từ lần sau bấm đúp bình thường.
-- **Windows:** mở `Dubber.exe` trong thư mục `Dubber`.
+- **Windows:** giải nén `Dubber-windows.zip` vào thư mục ngắn (vd. `C:\Dubber`), mở `Dubber.exe`
+  trong thư mục `Dubber`. Nếu SmartScreen chặn: **More info → Run anyway** (app chưa ký số).
 
 Bản đóng gói đã có sẵn mọi model cần thiết (nhận diện, tách nhạc, giọng đọc), chạy được khi
 không có mạng.

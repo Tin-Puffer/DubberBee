@@ -28,7 +28,7 @@ def probe_duration(path: Path) -> float:
     out = subprocess.run(
         [str(find_ffprobe()), "-v", "error", "-show_entries", "format=duration", "-of", "json",
          str(path)],
-        capture_output=True, text=True, **no_window(),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window(),
     )
     try:
         return float(json.loads(out.stdout or "{}").get("format", {}).get("duration", 0) or 0)

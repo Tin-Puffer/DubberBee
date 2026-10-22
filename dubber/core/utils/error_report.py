@@ -33,16 +33,20 @@ def _log_tail(n: int = LOG_TAIL_LINES) -> str:
 
 
 def _app_version() -> str:
+    if getattr(sys, "frozen", False):
+        return "bản đóng gói"
     try:
         import subprocess
+        from dubber.core.utils.ffmpeg_locator import no_window
         root = Path(__file__).resolve().parents[3]
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=5, **no_window())
         if out.returncode == 0:
             return out.stdout.strip()
     except Exception:
         pass
-    return "bản đóng gói" if getattr(sys, "frozen", False) else "?"
+    return "?"
 
 
 def build_report(video: Path, message: str, traceback_text: str, settings: dict) -> str:
