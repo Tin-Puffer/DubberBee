@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dubber"
+version = "0.1.0"
+description = "Vietnamese dubbing tool for Chinese videos"
+requires-python = ">=3.10"
+dependencies = [
+    "platformdirs>=4.0",
+    "google-genai>=2.0",
+    "piper-tts>=1.8.0",
+    "PySide6>=6.6",
+    "sherpa-onnx>=1.10",
+    "groq>=0.9",
+    "rich>=13.0",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    # FSMN-VAD frontend + config
+    "kaldi-native-fbank>=1.20",
+    "PyYAML>=6.0",
+    # Groq key saved from the GUI → macOS Keychain / Windows Credential Manager
+    "keyring>=25",
+]
+
+[project.optional-dependencies]
+# AI music/voice separation (MDX-Net): cleaner background mix and ASR on the voice only.
+# Without it the FFmpeg fallback is very poor and ASR uses the original audio.
+separation = [
+    "audio-separator[cpu]>=0.30",
+    "audioread>=3.0",
+]
+# Offline translation (MarianMT / NLLB) + separation — ~1-2 GB
+offline = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "sentencepiece>=0.2",
+    "sacremoses>=0.1",
+    "dubber[separation]",
+]
+# VieNeu-TTS v3 Turbo (Vietnamese TTS + voice cloning, ONNX on CPU). Pulls gradio +
+# librosa as hard deps of the package; Dubber itself only uses the ONNX path.
+vieneu = [
+    "vieneu==3.8.3",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+]
+
+[project.scripts]
+dubber = "dubber.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dubber*"]
+
+[tool.setuptools.package-data]
+dubber = ["assets/fonts/*.ttf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: loads real multi-GB models (run with DUBBER_SLOW_TESTS=1)"]

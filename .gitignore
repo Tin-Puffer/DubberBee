@@ -1,0 +1,65 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Video files
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.webm
+
+# Model files (large binaries — download separately)
+spike/models/
+dubber/resources/ffmpeg*
+dubber/resources/ffprobe*
+
+# Job output (user-specific, derived from input)
+jobs/
+
+# Secrets — never commit
+.env
+*.env
+secrets.*
+keys.bat
+*.key
+
+# PyInstaller resources (copy thủ công trước khi build)
+resources/ffmpeg.exe
+resources/ffprobe.exe
+resources/ffmpeg
+resources/ffprobe
+resources/ffmpeg-mac/
+resources/models/
+
+# macOS
+.DS_Store
+
+# Test / debug artifacts
+*.mp3
+E*.png
+ER*.png
+M0.txt
+M5ER.png
+i1.png
+i2.png
+thamchieu.png
+fresh_test.mp3
+delay_test_0.mp3
+
+# Claude Code internal
+.claude/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# ASR evaluation outputs (scripts/eval_asr.py)
+eval/

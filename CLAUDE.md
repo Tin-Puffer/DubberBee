@@ -1,0 +1,172 @@
+# CLAUDE.md — Hướng dẫn cho Claude agent
+
+Đây là project **Dubber**: phần mềm dub video tự động Trung → Việt chạy trên desktop.
+Pipeline: video → (tách nhạc) → ASR (sherpa-onnx SenseVoice + FSMN-VAD) → dịch (Groq/MarianMT/NLLB 1.3B)
+→ TTS (piper hoặc VieNeu-TTS) → render (FFmpeg).
+
+---
+
+## Môi trường
+
+- **Python**: 3.12
+- **GUI**: PySide6
+- **Venv**: `.venv/` (không commit)
+- **API keys**: translator chỉ đọc từ `os.environ`. Khóa Groq nhập trong GUI được lưu trong kho
+  mật khẩu hệ điều hành (`dubber/core/utils/api_keys.py`, `keyring`) và nạp vào `os.environ`
+  khi khởi động — TUYỆT ĐỐI không ghi khóa vào code, file (kể cả settings.json), log hay file kết quả
+  - `GROQ_API_KEY` — dịch online
+  - `GEMINI_API_KEY` — (dự phòng, hiện chưa dùng chính)
+
+---
+
+## Cài đặt trên máy mới
+
+Một lệnh: cài phụ thuộc → venv → thư viện → models → chạy test.
+
+```bash
+# Mac (cần Homebrew)
+bash scripts/setup_mac.sh --all            # --all: mọi model (16 giọng piper + VieNeu + tách nhạc, ~2GB)
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File setup_dev.ps1 -All
+```
+
+- FFmpeg **phải có libass** (filter `ass`) để đốt phụ đề: Mac dùng `ffmpeg-full`
+  (bản `ffmpeg` thường của Homebrew thiếu libass), Windows dùng Gyan full build.
+- Models tải từ GitHub Release `models-v1` của repo (github.com/Tin-Puffer/DubberBee, ~1,7GB:
+  SenseVoice, FSMN/Silero VAD, 16 giọng piper, gói VieNeu, UVR MDX-Net), lỗi thì tải từ nguồn gốc.
+  Địa chỉ mirror: `MODELS_MIRROR_URL` trong `dubber/core/asr/model_manager.py`.
+- API key — Mac: thêm vào `~/.zshrc`; Windows: `setx GROQ_API_KEY "gsk_..."`
+  ```bash
+  export GROQ_API_KEY="gsk_..."
+  export GEMINI_API_KEY="AI..."   # dự phòng
+  ```
+- Cài tay: `pip install -e ".[dev]"` (GUI, ASR, TTS, Groq) hoặc `".[dev,offline,vieneu]"`
+  (+ dịch offline torch/transformers ~1-2GB, tách nhạc `separation`, VieNeu-TTS),
+  rồi `python spike/download_models.py`.
+
+---
+
+## Chạy từ source
+
+```bash
+source .venv/bin/activate
+python -m dubber
+```
+
+---
+
+## Cấu trúc thư mục
+
+```
+dubber/
+├── __main__.py              # entry point
+├── app/
+│   ├── gui.py               # PySide6 GUI, PipelineWorker thread
+│   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
+└── core/
+    ├── pipeline.py          # run_m5() — điều phối toàn bộ pipeline
+    ├── asr/
+    │   ├── sensevoice_sherpa.py # sherpa-onnx SenseVoice; VAD FSMN (mặc định) / Silero
+    │   ├── fsmn_vad.py      # FSMN-VAD trên onnxruntime (port từ funasr-onnx, MIT)
+    │   ├── _fsmn_e2e_vad.py # máy trạng thái FSMN-VAD, giữ nguyên văn upstream
+    │   ├── postprocess.py   # tách câu theo mốc từng chữ ("timestamps") / "legacy"
+    │   └── model_manager.py # tìm model: bundle → user-data → spike/models
+    ├── translate/
+    │   ├── base.py          # interface Translator
+    │   ├── groq_translator.py   # Groq API (online)
+    │   ├── local_translator.py  # MarianMT / NLLB 1.3B / AutoTranslator
+    │   └── gemini.py        # Gemini (dự phòng)
+    ├── tts/
+    │   ├── factory.py       # make_tts_engine("piper" | "vieneu", voice, tts_dir)
+    │   ├── piper_tts.py     # piper TTS tiếng Việt
+    │   ├── vieneu_tts.py    # VieNeu-TTS v3 Turbo (ONNX/CPU, 48 kHz, không chỉnh tốc độ)
+    │   └── voice_library.py # giọng VieNeu có sẵn + giọng clone (user-data/voices/vieneu)
+    ├── audio/
+    │   └── separate.py      # tách nhạc nền (audio-separator hoặc FFmpeg fallback)
+    ├── video/
+    │   └── render.py        # render_final() — ghép video + subtitle + audio (FFmpeg)
+    └── utils/
+        ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH
+        └── job_cache.py     # chữ ký *.sig.json: chỉ tái dùng asr/translate khi cấu hình khớp
+```
+
+---
+
+## Models cần có
+
+Đặt tại `spike/models/` (dev) hoặc tải tự động qua `download_models.py`:
+
+| Model | Kích thước | Dùng cho |
+|---|---|---|
+| `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/` | ~229MB | ASR |
+| `fsmn-vad/` (`model_quant.onnx`, `config.yaml`, `am.mvn`) | ~0,5MB | VAD mặc định (ModelScope `iic/speech_fsmn_vad_zh-cn-16k-common-onnx`) |
+| `silero_vad.onnx` | nhỏ | VAD dự phòng |
+| `piper/vi_VN-thanh_nien_tu_tin-medium.onnx` + `.json` | ~60MB | TTS mặc định (HF: vongocanhthi/acut-piper-vietnamese) |
+| `piper/*.onnx` khác (15 giọng) | ~60MB/giọng | TTS — `download_models.py --all-voices` |
+| HuggingFace MarianMT (tải lần đầu khi chọn Local) | ~300MB | Dịch offline |
+| HuggingFace NLLB-200 distilled 1.3B (ghim commit safetensors) | ~5,5GB | Dịch offline chất lượng hơn |
+| `vieneu/` (VieNeu-TTS v3 Turbo + codec MOSS, file thật — không dùng cache HF) | ~610MB | TTS VieNeu — `download_models.py --vieneu` hoặc tự tải lần đầu vào user-data |
+
+---
+
+## Build exe/app
+
+Chạy sau khi setup xong. Script tự copy FFmpeg + models vào `resources/` rồi chạy PyInstaller.
+
+```bash
+# Mac → dist/Dubber.app + dist/Dubber-macos.zip
+bash scripts/build_exe_mac.sh
+```
+```powershell
+# Windows → dist\Dubber\Dubber.exe
+.\scripts\build_exe.ps1
+```
+
+Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chuột phải → Open.
+
+---
+
+## Những điều quan trọng khi chỉnh sửa
+
+1. **Không bao giờ** log hoặc print API key — key chỉ được đọc qua `os.environ`
+2. `render_final()` nhận `scale`, `fps`, `crf`, `encoder_preset`, `audio_bitrate` — không hardcode
+3. Khi chạy từ `.exe` (`sys.frozen = True`), models nằm ở `sys._MEIPASS/resources/models/`
+4. `AutoTranslator` tự fallback Groq → Local; nếu cả hai fail thì raise RuntimeError rõ ràng
+5. FFmpeg được tìm theo thứ tự: `resources/ffmpeg[.exe]` → Homebrew `ffmpeg-full` (macOS) → PATH
+
+---
+
+## Trạng thái hiện tại (cập nhật 2026-10-22)
+
+- [x] M1 ASR (sherpa-onnx SenseVoice)
+- [x] M2 Dịch (Groq online + MarianMT/NLLB offline)
+- [x] M3 TTS (piper tiếng Việt)
+- [x] M4 Tách nhạc nền (audio-separator + FFmpeg fallback)
+- [x] M5 Render video (FFmpeg + ASS subtitle)
+- [x] M6 GUI PySide6
+- [x] M7 Tùy chỉnh xuất video (resolution, FPS, CRF, preset, audio bitrate)
+- [x] M8 PyInstaller bundle (Windows, ~2GB full với torch+transformers)
+- [x] M8 Mac build script (`scripts/build_exe_mac.sh`)
+- [x] Hàng đợi nhiều video, cấu hình riêng từng video, chọn thư mục lưu
+- [x] M9 Tách câu theo mốc từng chữ, FSMN-VAD (Silero dự phòng), ASR trên giọng đã tách nhạc,
+      NLLB 1.3B, bộ đọc VieNeu-TTS + thư viện giọng clone, ghi chú cho mọi lựa chọn GUI
+      (bản .app đóng gói đủ VieNeu + audio-separator + model, chạy offline: ~3,7GB, zip ~2,1GB)
+
+---
+
+## Lệnh thường dùng
+
+```bash
+# Chạy app
+python -m dubber
+
+# Chạy test (nếu có)
+pytest tests/
+
+# Build lại exe (Windows)
+pyinstaller dubber.spec --noconfirm
+
+# Xem log chi tiết khi chạy
+python -m dubber --log-level DEBUG   # nếu có flag này
+```
