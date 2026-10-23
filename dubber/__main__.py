@@ -84,9 +84,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
 
-    from dubber.core.utils.paths import prepare_job_dir, prune_jobs
+    from dubber.core.utils.paths import prepare_job_dir
     job_dir = prepare_job_dir(input_path)   # reused only while the source file is unchanged
-    prune_jobs()   # old / oversized caches of other videos (this one is the newest: kept)
 
     from dubber.core.pipeline import Pipeline
     pipeline = Pipeline(ffmpeg=ffmpeg, ffprobe=ffprobe, job_dir=job_dir)

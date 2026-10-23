@@ -37,7 +37,7 @@ class WorkspaceDialog(QDialog):
     def __init__(self, busy: bool = False, on_logs_changed: Optional[Callable[[], None]] = None,
                  parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Thư mục làm việc")
+        self.setWindowTitle("Workspace")
         self.setMinimumWidth(900)
         self._busy = busy
         self._on_logs_changed = on_logs_changed
@@ -45,8 +45,8 @@ class WorkspaceDialog(QDialog):
 
         lay = QVBoxLayout(self)
         intro = QLabel(
-            "Nơi Dubber lưu file. Bấm <b>Mở</b> để xem / xóa bằng tay; <b>Đổi…</b> để dùng "
-            "thư mục khác (Dubber tạo thư mục con riêng bên trong, không đụng tới file khác).",
+            "Nơi Dubber Bee lưu file. Bấm <b>Mở</b> để xem / xóa bằng tay; <b>Đổi…</b> để dùng "
+            "thư mục khác (Dubber Bee tạo thư mục con riêng bên trong, không đụng tới file khác).",
             self)
         intro.setWordWrap(True)
         lay.addWidget(intro)
@@ -55,12 +55,12 @@ class WorkspaceDialog(QDialog):
         self._grid.setColumnStretch(1, 1)
         lay.addLayout(self._grid)
         self._row = 0
-        self._add("workspace", "File tạm của video", "workspace_dir",
-                  note="Tự dọn: tối đa 10 video, 5 GB, 7 ngày")
+        self._add("workspace", "Cache của video", "workspace_dir",
+                  note="Không tự xóa — dọn bằng nút “Dọn cache”")
         self._add("logs", "Log & báo cáo lỗi", "logs_dir", extra=("Báo cáo lỗi", "errors"))
         self._add("voices", "Giọng đã clone", None,
                   note="Xóa giọng bằng nút 🗑 trong app")
-        self._add("models", "Model đã tải", None)
+        self._add("models", "Model", None)
 
         if busy:
             warn = QLabel("Đang có video chạy — tạm thời không đổi được thư mục.", self)
@@ -151,8 +151,8 @@ class WorkspaceDialog(QDialog):
         new.mkdir(parents=True, exist_ok=True)
         if kind == "workspace" and old.is_dir() and any(_is_job_dir(d) for d in old.iterdir()):
             if QMessageBox.question(
-                self, "Chuyển file tạm",
-                f"Chuyển các file tạm hiện có sang thư mục mới?\n{new}\n\n"
+                self, "Chuyển cache",
+                f"Chuyển cache hiện có sang thư mục mới?\n{new}\n\n"
                 "Chọn “No” thì chúng ở lại thư mục cũ (có thể xóa bằng tay).",
             ) == QMessageBox.Yes:
                 move_jobs(old, new)

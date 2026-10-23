@@ -270,7 +270,7 @@ class TrimEditor(QWidget):
     def _update_info(self) -> None:
         start, end = self.spin_start.value(), self.spin_end.value()
         if not self._duration:
-            self.lbl_info.setText("chọn video để kéo theo độ dài")
+            self.lbl_info.setText("Chọn video để đặt đoạn cắt")
             return
         tail = " (hết video)" if end >= self._duration - 0.05 else ""
         self.lbl_info.setText(f"{fmt_time(start)} → {fmt_time(end)}{tail} · dài {end - start:.1f}s")

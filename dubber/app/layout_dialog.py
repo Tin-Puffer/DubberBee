@@ -265,7 +265,7 @@ class LayoutDialog(QDialog):
         (self._rb_sub if start_mode in ("sub", "preview") else self._rb_blur).setChecked(True)
         self._rb_blur.toggled.connect(self._on_mode)
         self._on_mode()
-        btn_clear_blur = QPushButton("Xoá vùng mờ", self)
+        btn_clear_blur = QPushButton("Xóa vùng làm mờ", self)
         btn_clear_blur.clicked.connect(lambda: self._reset("blur"))
         btn_reset_sub = QPushButton("Phụ đề về mặc định", self)
         btn_reset_sub.clicked.connect(lambda: self._reset("sub"))
@@ -278,7 +278,7 @@ class LayoutDialog(QDialog):
 
         row_b = QHBoxLayout()
         row_b.addStretch()
-        btn_cancel = QPushButton("Huỷ", self)
+        btn_cancel = QPushButton("Hủy", self)
         btn_ok = QPushButton("Xong", self)
         btn_ok.setDefault(True)
         btn_cancel.clicked.connect(self.reject)

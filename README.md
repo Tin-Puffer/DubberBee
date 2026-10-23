@@ -1,8 +1,11 @@
-# dubber
+# Dubber Bee
 
-Desktop app (PySide6) + CLI for dubbing Chinese videos to Vietnamese:
-ASR (SenseVoice + FSMN-VAD) → translation (Groq / MarianMT / NLLB 1.3B) →
-TTS (Piper or VieNeu-TTS with voice cloning) → FFmpeg render.
+<img src="dubber/assets/logo/logo_256.png" alt="Dubber Bee logo" width="96" align="right">
+
+Desktop app (PySide6) + CLI for dubbing Chinese videos to Vietnamese (Python package `dubber`):
+ASR (SenseVoice + FSMN-VAD) → translation (Groq / MarianMT / NLLB 1.3B, optional review with
+copy / paste to an AI chatbot) → TTS (Piper or VieNeu-TTS with voice cloning) → FFmpeg render,
+plus a ready-to-paste TikTok prompt (`<video>_vi.txt`) next to every exported video.
 
 - **Hướng dẫn sử dụng (người dùng):** [HUONG_DAN_SU_DUNG.md](HUONG_DAN_SU_DUNG.md)
 - **Tài liệu kỹ thuật:** [TECHNICAL.md](TECHNICAL.md)
@@ -24,7 +27,7 @@ git clone https://github.com/Tin-Puffer/DubberBee.git && cd DubberBee
 bash scripts/setup_mac.sh --all                                   # macOS (needs Homebrew)
 powershell -ExecutionPolicy Bypass -File setup_dev.ps1 -All       # Windows
 source .venv/bin/activate && python -m dubber                     # run (GUI)
-bash scripts/build_exe_mac.sh                                     # build Dubber.app
+bash scripts/build_exe_mac.sh                                     # build Dubber.app (shown as "Dubber Bee")
 ```
 
 By hand:
@@ -64,22 +67,24 @@ app, so they survive updates.
 
 ## Run
 
-Set API key first (never hard-code it):
-
 ```bash
-# Windows PowerShell
-$env:GEMINI_API_KEY = "your-key-here"
-
-# macOS/Linux
-export GEMINI_API_KEY="your-key-here"
+python -m dubber                         # GUI (default)
+python -m dubber input.mp4               # CLI: Groq + Piper default voice, full render
+python -m dubber input.mp4 --tts vieneu --voice "preset:<name>"
+python -m dubber --help                  # --translator, --vad, --tts, --voice, -v
 ```
 
+Groq API key: in the GUI, **⚙ Cài đặt → Groq API key → 🔑 Nhập API key…** (stored in the OS
+keychain, never in a file; **Kiểm tra** sends one 1-token request). The CLI / translator only
+read `os.environ`, so for the CLI without a saved key:
+
 ```bash
-dubber input.mp4                        # giọng nữ (mặc định)
-dubber input.mp4 --voice vi-VN-NamMinhNeural  # giọng nam
+export GROQ_API_KEY="gsk_..."            # macOS / Linux
+$env:GROQ_API_KEY = "gsk_..."            # Windows PowerShell
 ```
 
-Outputs three paths — `asr.json`, `translate.json`, `dub.wav` — e.g.:
+The CLI renders into the video's cache dir and prints five paths — `asr.json`,
+`translate.json`, `dub.wav`, `subs.ass`, `output.mp4` — e.g.:
 
 ```
 C:\Users\<name>\AppData\Local\dubber\dubber\jobs\48c476fb7588\asr.json

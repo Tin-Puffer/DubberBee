@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for Dubber — Chinese → Vietnamese video dubbing app
+# PyInstaller spec for Dubber Bee — Chinese → Vietnamese video dubbing app
 #
 # Build:  scripts\build_exe.ps1        (Windows) → dist\Dubber\Dubber.exe
 #         scripts/build_exe_mac.sh      (macOS)   → dist/Dubber.app
@@ -80,6 +80,9 @@ for _name in (['ffmpeg', 'ffprobe'] if IS_MAC else ['ffmpeg.exe', 'ffprobe.exe']
 # Added as DATA so PyInstaller doesn't merge its dylibs into Frameworks/.
 # Subtitle fonts (dubber/assets/fonts → same path in the bundle; see fonts.fonts_dir())
 font_datas = [(str(_f), 'dubber/assets/fonts') for _f in (project_root / 'dubber' / 'assets' / 'fonts').glob('*.ttf')]
+# App logo (header + Dock / taskbar icon at runtime; see gui.app_logo)
+logo_dir = project_root / 'dubber' / 'assets' / 'logo'
+font_datas += [(str(_f), 'dubber/assets/logo') for _f in logo_dir.glob('logo_*.png')]
 
 ffmpeg_mac_datas = []
 _ffmac = project_root / 'resources' / 'ffmpeg-mac'
@@ -164,7 +167,7 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-_icon_name = 'icon.icns' if IS_MAC else 'icon.ico'
+_icon = logo_dir / ('icon.icns' if IS_MAC else 'icon.ico')   # the bee logo
 
 exe = EXE(
     pyz,
@@ -182,8 +185,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(project_root / 'resources' / _icon_name)
-         if (project_root / 'resources' / _icon_name).exists() else None,
+    icon=str(_icon) if _icon.exists() else None,
 )
 
 coll = COLLECT(
@@ -201,12 +203,12 @@ if IS_MAC:
     app = BUNDLE(
         coll,
         name='Dubber.app',
-        icon=str(project_root / 'resources' / 'icon.icns')
-             if (project_root / 'resources' / 'icon.icns').exists() else None,
+        icon=str(_icon) if _icon.exists() else None,
         bundle_identifier='com.dubber.app',
         info_plist={
-            'CFBundleDisplayName': 'Dubber',
-            'CFBundleShortVersionString': '0.1.0',
+            'CFBundleName': 'Dubber Bee',          # menu bar / Dock name
+            'CFBundleDisplayName': 'Dubber Bee',
+            'CFBundleShortVersionString': '0.2.0',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '12.0',
         },

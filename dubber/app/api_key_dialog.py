@@ -16,14 +16,14 @@ _DIM = "#888"
 class GroqKeyDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Khóa Groq (dịch online)")
+        self.setWindowTitle("Groq API key")
         self.setMinimumWidth(520)
         self._task = None
 
         lay = QVBoxLayout(self)
         intro = QLabel(
-            "Groq dịch tiếng Trung → tiếng Việt tốt nhất (cần mạng, miễn phí có giới hạn).<br>"
-            "Lấy khóa tại <a href='https://console.groq.com/keys'>console.groq.com/keys</a> "
+            "Groq cho chất lượng dịch Trung → Việt tốt nhất (cần Internet, gói miễn phí có giới hạn).<br>"
+            "Lấy API key tại <a href='https://console.groq.com/keys'>console.groq.com/keys</a> "
             "→ <i>Create API Key</i>, rồi dán vào đây.", self)
         intro.setOpenExternalLinks(True)
         intro.setWordWrap(True)
@@ -51,14 +51,14 @@ class GroqKeyDialog(QDialog):
         self._result.setWordWrap(True)
         lay.addWidget(self._result)
 
-        note = QLabel("Khóa được lưu trong kho mật khẩu của hệ điều hành (Keychain / Credential "
-                      "Manager), không nằm trong file nào của Dubber và không ghi vào log.", self)
+        note = QLabel("Key được lưu trong Keychain (Windows: Credential Manager), không nằm trong "
+                      "file nào của Dubber Bee và không ghi vào log.", self)
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
         lay.addWidget(note)
 
         btns = QHBoxLayout()
-        self.btn_delete = QPushButton("Xóa khóa đã lưu", self)
+        self.btn_delete = QPushButton("Xóa key đã lưu", self)
         self.btn_delete.clicked.connect(self._delete)
         btns.addWidget(self.btn_delete)
         btns.addStretch(1)
@@ -80,14 +80,14 @@ class GroqKeyDialog(QDialog):
     def _show_status(self):
         src = api_keys.source()
         if src == "app":
-            text = f"✓ Đã lưu trong Dubber: {api_keys.mask(api_keys.get_saved())}"
+            text = f"✓ Đã lưu trong Dubber Bee: {api_keys.mask(api_keys.get_saved())}"
             color = _GREEN
         elif src == "env":
-            text = (f"Đang dùng khóa từ biến môi trường: {api_keys.mask(api_keys.current())} "
-                    "(lưu vào Dubber để không phụ thuộc cách mở app)")
+            text = (f"Đang dùng key từ biến môi trường: {api_keys.mask(api_keys.current())} "
+                    "(lưu vào Dubber Bee để không phụ thuộc cách mở app)")
             color = _DIM
         else:
-            text, color = "Chưa có khóa Groq — dịch Groq / Tự động sẽ dùng MarianMT offline", _RED
+            text, color = "Chưa có Groq API key — chế độ Groq / Tự động sẽ dịch bằng MarianMT (offline)", _RED
         self._status.setText(text)
         self._status.setStyleSheet(f"color: {color};")
         self.btn_delete.setEnabled(src == "app")
@@ -121,7 +121,7 @@ class GroqKeyDialog(QDialog):
         thread.start()
 
     def _test_ok(self, _r):
-        self._say("✓ Khóa dùng được", _GREEN)
+        self._say("✓ Key hoạt động", _GREEN)
 
     def _test_failed(self, msg: str):
         self._say(f"✗ {msg}", _RED)
@@ -139,17 +139,16 @@ class GroqKeyDialog(QDialog):
         if api_keys.save(value):
             self._say("✓ Đã lưu — dùng ngay cho các video sau", _GREEN)
         else:
-            self._say("Không lưu được vào kho mật khẩu của hệ điều hành — khóa chỉ dùng tới "
-                      "khi tắt app", _RED)
+            self._say("Không lưu được vào Keychain — key chỉ dùng được tới khi tắt app", _RED)
         self.edit.clear()
         self._show_status()
 
     def _delete(self):
-        if QMessageBox.question(self, "Xóa khóa Groq", "Xóa khóa Groq đã lưu trong Dubber?") \
+        if QMessageBox.question(self, "Xóa Groq API key", "Xóa Groq API key đã lưu trong Dubber Bee?") \
                 != QMessageBox.Yes:
             return
         api_keys.delete()
-        self._say("Đã xóa khóa", _DIM)
+        self._say("Đã xóa key", _DIM)
         self._show_status()
 
     def done(self, result):

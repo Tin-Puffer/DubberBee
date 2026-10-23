@@ -1,6 +1,6 @@
 # CLAUDE.md — Hướng dẫn cho Claude agent
 
-Đây là project **Dubber**: phần mềm dub video tự động Trung → Việt chạy trên desktop.
+Đây là project **Dubber Bee** (package `dubber`): phần mềm dub video tự động Trung → Việt chạy trên desktop.
 Pipeline: video → (tách nhạc) → ASR (sherpa-onnx SenseVoice + FSMN-VAD) → dịch (Groq/MarianMT/NLLB 1.3B)
 → TTS (piper hoặc VieNeu-TTS) → render (FFmpeg).
 
@@ -66,9 +66,18 @@ python -m dubber
 ```
 dubber/
 ├── __main__.py              # entry point
+├── assets/                  # fonts/ (phụ đề), logo/ (logo.svg → logo_*.png, icon.icns, icon.ico)
 ├── app/
 │   ├── gui.py               # PySide6 GUI, PipelineWorker thread
 │   ├── tasks.py             # TaskRunner + BusyBar: việc chậm chạy nền, có thanh loading
+│   ├── review_dialog.py     # duyệt/sửa bản dịch trước TTS, copy cho AI / dán kết quả AI
+│   ├── queue_card.py        # thẻ video trong hàng đợi (trạng thái + nút theo trạng thái)
+│   ├── progress.py          # % tổng + thời gian còn lại (trừ lúc chờ người dùng)
+│   ├── wait_dialogs.py      # hỏi khi Groq giới hạn + mở file/thư mục
+│   ├── settings_dialog.py   # ⚙ Cài đặt: Groq API key (kiểm tra + đèn), thông báo, prompt AI, cache
+│   ├── prompt_dialog.py     # soạn prompt AI (sửa bản dịch / TikTok): lưu, khôi phục mặc định
+│   ├── preview.py           # khung hình + phụ đề mẫu (gần đúng) trong "Thông tin video gốc"
+│   ├── notify.py            # thông báo hệ thống + Dock khi xong / lỗi / cần người dùng
 │   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
 └── core/
     ├── pipeline.py          # run_m5() — điều phối toàn bộ pipeline
@@ -83,6 +92,9 @@ dubber/
     │   ├── groq_translator.py   # Groq API (online)
     │   ├── local_translator.py  # MarianMT / NLLB 1.3B / AutoTranslator
     │   ├── normalize_vi.py  # chuẩn hóa bản dịch (viết hoa, dấu câu, tên riêng Groq)
+    │   ├── review.py        # câu cần chú ý, định dạng copy/dán kết quả AI
+    │   ├── tiktok.py        # prompt TikTok + lời thoại → <video>_vi.txt cạnh video xuất
+    │   ├── prompts.py       # prompt AI người dùng sửa được (settings.json; mặc định / reset)
     │   └── gemini.py        # Gemini (dự phòng)
     ├── tts/
     │   ├── factory.py       # make_tts_engine("piper" | "vieneu", voice, tts_dir)
@@ -167,6 +179,17 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
 - [x] M10 Phụ đề (`docs/plan-m10-subtitle.md`): chuẩn hóa bản dịch, cắt câu đúng ý, sub 1 dòng,
       che sub gốc Tắt/Tự động/Thủ công, viền + màu chữ; thanh loading khi nạp file, video đang
       chạy chỉ khóa sửa (vẫn xem được cấu hình)
+- [x] M11 Duyệt bản dịch: checkbox "Bỏ qua" (mặc định bật = chạy thẳng); bỏ tick thì dịch xong
+      dừng lại mở bảng sửa từng câu, nghe gốc/đọc thử, sao chép cho chatbot + dán kết quả;
+      bản sửa ghi đè `translations/<bộ dịch>.json` nên chạy lại dùng tiếp
+- [x] UI: hàng đợi dạng thẻ (chọn nhiều, kéo đổi thứ tự, chuột phải, nhân bản), tiến trình % +
+      thời gian còn lại, thông báo, ⚙ Cài đặt, ảnh xem trước phụ đề, nhớ cửa sổ/tab/hàng đợi
+- [x] Xuất kèm `<tên>_vi.txt` cạnh `<tên>_vi.mp4`: prompt ChatGPT (tiêu đề + mô tả + 5 hashtag) đã ghép lời thoại
+- [x] Prompt AI (sửa bản dịch, TikTok) sửa được trong ⚙ Cài đặt, lưu `settings.json`, có ↺ Mặc định
+- [x] Bỏ dịch thủ công (cấu hình cũ `translator: manual` chạy như `auto`); bỏ mọi tự dọn cache
+      (chỉ nút "Dọn cache"); lăn chuột không đổi giá trị ô chọn / ô số / thanh trượt
+- [x] Tên hiển thị **Dubber Bee** + logo ong (`dubber/assets/logo/`); thư mục dữ liệu, service
+      keyring `Dubber`, tên file build `Dubber.app`/`Dubber.exe` giữ nguyên
 
 ---
 

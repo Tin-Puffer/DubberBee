@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 
 LOG_TAIL_LINES = 150
-MAX_REPORTS = 30   # older reports are deleted
 
 
 def errors_dir() -> Path:
@@ -52,7 +51,7 @@ def _app_version() -> str:
 def build_report(video: Path, message: str, traceback_text: str, settings: dict) -> str:
     now = datetime.now()
     return "\n".join([
-        "=== Dubber — báo cáo lỗi ===",
+        "=== Dubber Bee — báo cáo lỗi ===",
         f"Thời gian : {now:%Y-%m-%d %H:%M:%S}",
         f"Video     : {video}",
         f"Lỗi       : {message}",
@@ -61,7 +60,7 @@ def build_report(video: Path, message: str, traceback_text: str, settings: dict)
         json.dumps(settings, ensure_ascii=False, indent=1, default=str),
         "",
         "── Môi trường ──",
-        f"Dubber {_app_version()} · Python {platform.python_version()} · "
+        f"Dubber Bee {_app_version()} · Python {platform.python_version()} · "
         f"{platform.system()} {platform.release()} ({platform.machine()})",
         "",
         "── Traceback ──",
@@ -81,6 +80,4 @@ def write_error_report(video: Path, message: str, traceback_text: str,
     path = d / f"{datetime.now():%Y%m%d-%H%M%S}_{stem}.txt"
     path.write_text(build_report(Path(video), message, traceback_text, settings),
                     encoding="utf-8")
-    for old in sorted(d.glob("*.txt"), key=lambda f: f.stat().st_mtime, reverse=True)[MAX_REPORTS:]:
-        old.unlink(missing_ok=True)
     return path

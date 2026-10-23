@@ -76,17 +76,6 @@ def move_jobs(old_root: Path, new_root: Path) -> int:
     return n
 
 
-# Job cache limits — the oldest job dirs go first when any is exceeded
-MAX_KEPT_JOBS = 10
-MAX_JOB_AGE_DAYS = 7
-MAX_JOBS_BYTES = 5 * 1024 ** 3   # 5 GB (a 1-hour video's job is ~3 GB before slimming)
-
-# Rebuilt on every run (cheap) but large — removed once a run is over
-_REBUILT_FILES = ("output.mp4", "dubbed.mp4", "audio_stereo.wav", "background_mixed.wav",
-                  "dub.wav", "trimmed.part.mp4")
-_REBUILT_DIRS = ("tts_speed",)
-
-
 def prepare_job_dir(video_path: Path, trim: "tuple | None" = None) -> Path:
     """Job dir for *video_path*, reused only for the same source file and trim range.
 
@@ -112,18 +101,8 @@ def prepare_job_dir(video_path: Path, trim: "tuple | None" = None) -> Path:
         shutil.rmtree(job_dir, ignore_errors=True)
         job_dir.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps(sig, ensure_ascii=False), encoding="utf-8")
-    marker.touch()   # last use, for prune_jobs
+    marker.touch()   # last use
     return job_dir
-
-
-def slim_job_dir(job_dir: Path) -> None:
-    """Drop the big intermediates a rerun rebuilds anyway; keep what is slow to redo
-    (ASR, translations, TTS lines, separation stems, trimmed video)."""
-    import shutil
-    for name in _REBUILT_FILES:
-        (job_dir / name).unlink(missing_ok=True)
-    for name in _REBUILT_DIRS:
-        shutil.rmtree(job_dir / name, ignore_errors=True)
 
 
 def _dir_size(d: Path) -> int:
@@ -134,41 +113,6 @@ def jobs_size() -> int:
     """Bytes used by all job dirs."""
     root = jobs_root()
     return _dir_size(root) if root.is_dir() else 0
-
-
-def prune_jobs(keep: int = MAX_KEPT_JOBS, max_age_days: float = MAX_JOB_AGE_DAYS,
-               max_bytes: int = MAX_JOBS_BYTES) -> None:
-    """Delete job dirs beyond the *keep* most recently used, older than *max_age_days*,
-    and (oldest first) while all of them together exceed *max_bytes*.
-    The most recently used job is always kept."""
-    import shutil
-    import time
-
-    root = jobs_root()
-    if not root.is_dir():
-        return
-
-    def last_use(d: Path) -> float:
-        m = d / "input.json"
-        return (m if m.exists() else d).stat().st_mtime
-
-    dirs = sorted((d for d in root.iterdir() if _is_job_dir(d)), key=last_use, reverse=True)
-    if not dirs:
-        return
-    cutoff = time.time() - max_age_days * 86400
-    kept = [dirs[0]]
-    for d in dirs[1:]:
-        if len(kept) >= keep or last_use(d) < cutoff:
-            shutil.rmtree(d, ignore_errors=True)
-        else:
-            kept.append(d)
-    sizes = {d: _dir_size(d) for d in kept}
-    total = sum(sizes.values())
-    for d in reversed(kept[1:]):          # oldest first, never the newest
-        if total <= max_bytes:
-            break
-        shutil.rmtree(d, ignore_errors=True)
-        total -= sizes[d]
 
 
 def clear_jobs() -> None:

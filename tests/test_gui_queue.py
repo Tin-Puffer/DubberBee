@@ -46,12 +46,13 @@ class _FakeWorker(QObject):
 
     def run(self):
         _FakeWorker.runs.append((self.input_path.name, self.kw))
-        if self.input_path.stem in ("manual", "ratelimit"):   # waits on the user
-            kind = "manual" if self.input_path.stem == "manual" else "rate_limit"
+        if self.input_path.stem in ("ratelimit", "review"):   # waits on the user
+            kind = {"ratelimit": "rate_limit", "review": "review"}[self.input_path.stem]
             self.ask.emit(kind, {"video": self.input_path.name, "script": Path("x_zh.txt"),
                                  "count": 3, "can_reuse": False, "error": None,
                                  "wait": 12, "done": 1, "total": 3, "again": False,
-                                 "can_local": True})
+                                 "can_local": True, "rows": [], "audio": None,
+                                 "work_dir": None, "tts_engine": "piper", "voice": None})
             end = time.time() + 10
             while not (self._answered or self._cancel) and time.time() < end:
                 time.sleep(0.01)
@@ -127,7 +128,7 @@ def test_video_info_is_read_in_the_background(win, tmp_path, monkeypatch):
     monkeypatch.setattr(info_mod, "probe_info", slow_probe)
     a, b = _videos(tmp_path, "a.mp4", "b.mp4")
     win._add_files([a, b])                      # returns at once, nothing read yet
-    assert "đang đọc" in win._list.item(0).text()
+    assert "đang đọc" in win._list.itemWidget(win._list.item(0)).text()
     assert not win._queue_busy.isHidden()
     assert "Đang đọc" in win._info._val["res"].text()
     gate.set()
@@ -135,7 +136,7 @@ def test_video_info_is_read_in_the_background(win, tmp_path, monkeypatch):
     while any(not j.probed() for j in win._jobs) and time.time() < end:
         QApplication.processEvents(); time.sleep(0.01)
     assert seen_threads == [False, False]       # ffprobe never ran on the GUI thread
-    assert "đang đọc" not in win._list.item(0).text()
+    assert "đang đọc" not in win._list.itemWidget(win._list.item(0)).text()
     assert win._queue_busy.isHidden()
     assert "640 × 360" in win._info._val["res"].text()
 
@@ -152,32 +153,6 @@ def test_running_video_is_read_only_other_videos_editable(win, tmp_path):
     win._list.setCurrentRow(1)
     assert not win._opts._read_only and win._opts._combo_font.isEnabled()
     win._jobs[0].status, win._running = gui._Job.PENDING, -1
-
-
-def test_manual_dialog_checks_the_file_before_closing(tmp_path, monkeypatch):
-    from dubber.app.manual_dialog import ManualTranslateDialog
-    QApplication.instance() or QApplication([])
-    script = tmp_path / "zh.txt"; script.write_text("你好\n再见\n", encoding="utf-8")
-    bad = tmp_path / "bad.txt"; bad.write_text("chỉ một dòng\n", encoding="utf-8")
-    good = tmp_path / "good.txt"; good.write_text("Xin chào\nTạm biệt\n", encoding="utf-8")
-    dlg = ManualTranslateDialog("v.mp4", script, 2, can_reuse=False)
-    pick = iter([str(bad), str(good)])
-    import dubber.app.manual_dialog as md
-    monkeypatch.setattr(md.QFileDialog, "getOpenFileName", lambda *a, **k: (next(pick), ""))
-
-    def settle():
-        end = time.time() + 5
-        while dlg._runner.busy() and time.time() < end:
-            QApplication.processEvents(); time.sleep(0.01)
-
-    dlg._pick()
-    assert not dlg._busy.isHidden() and not dlg._btn_pick.isEnabled()
-    settle()
-    assert dlg.result() != gui.QDialog.Accepted and dlg.answer is None
-    assert not dlg._err.isHidden() and dlg._btn_pick.isEnabled()
-    dlg._pick()
-    settle()
-    assert dlg.answer == good
 
 
 def test_each_video_keeps_its_own_config(win, tmp_path):
@@ -260,7 +235,10 @@ def _run_worker(tmp_path, monkeypatch, src, fail=False, **kw):
                 raise RuntimeError("render failed")
             out = self.job_dir / "output.mp4"
             out.write_bytes(b"video")
-            return None, None, None, None, out
+            tj = self.job_dir / "translate.json"
+            tj.write_text('[{"id": 0, "start": 0, "end": 1, "src_text": "你好", '
+                          '"vi_text": "Xin chào."}]', encoding="utf-8")
+            return None, tj, None, None, out
 
     monkeypatch.setattr(pl, "Pipeline", FakePipeline)
     w = gui.PipelineWorker(src, output_dir=tmp_path / "out", **kw)
@@ -276,8 +254,10 @@ def test_worker_keeps_job_for_same_input(tmp_path, monkeypatch):
     seen, res = _run_worker(tmp_path, monkeypatch, src)
     assert res == [tmp_path / "out" / "clip_vi.mp4"]
     assert (tmp_path / "out" / "clip_vi.mp4").read_bytes() == b"video"
+    txt = (tmp_path / "out" / "clip_vi.txt").read_text(encoding="utf-8")
+    assert "Hashtag: #... #... #... #... #..." in txt and txt.rstrip().endswith("[1] Xin chào.")
     job = seen["job_dir"]
-    assert (job / "asr.json").exists() and not (job / "output.mp4").exists()   # render dropped
+    assert (job / "asr.json").exists() and (job / "output.mp4").exists()   # nothing auto-deleted
 
     seen, _ = _run_worker(tmp_path, monkeypatch, src)            # same file → cache kept
     assert "asr.json" in seen["files_at_start"]
@@ -324,54 +304,13 @@ def _jobs(tmp_path, monkeypatch, ages_days, size=10):
     return paths
 
 
-def _left(tmp_path):
-    return sorted(p.name for p in (tmp_path / "jobs").iterdir())
-
-
-def test_prune_jobs_keeps_most_recent(tmp_path, monkeypatch):
-    paths = _jobs(tmp_path, monkeypatch, [0.4, 0.3, 0.2, 0.1, 0.0])
-    paths.prune_jobs(keep=2)
-    assert _left(tmp_path) == ["j3", "j4"]
-
-
-def test_prune_jobs_by_age(tmp_path, monkeypatch):
-    paths = _jobs(tmp_path, monkeypatch, [10, 8, 1, 0])
-    paths.prune_jobs()
-    assert _left(tmp_path) == ["j2", "j3"]
-
-
-def test_prune_jobs_by_total_size_keeps_newest(tmp_path, monkeypatch):
-    paths = _jobs(tmp_path, monkeypatch, [3, 2, 1, 0], size=1000)
-    paths.prune_jobs(max_bytes=2500)
-    assert _left(tmp_path) == ["j2", "j3"]                   # oldest dropped first
-    paths.prune_jobs(max_bytes=10)
-    assert _left(tmp_path) == ["j3"]                         # the newest always stays
-
-
-def test_slim_job_dir_keeps_slow_to_redo_files(tmp_path):
-    from dubber.core.utils.paths import slim_job_dir
-    keep = ["asr.json", "translate.json", "audio.wav", "trimmed.mp4", "separated/vocals.wav",
-            "tts/a.wav", "translations/groq.json"]
-    drop = ["output.mp4", "dubbed.mp4", "audio_stereo.wav", "background_mixed.wav", "dub.wav",
-            "tts_speed/a_x1.10.wav"]
-    for f in keep + drop:
-        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / f).write_bytes(b"x")
-    slim_job_dir(tmp_path)
-    assert all((tmp_path / f).exists() for f in keep)
-    assert not any((tmp_path / f).exists() for f in drop)
-
-
-def test_error_reports_rotate(tmp_path, monkeypatch):
-    import os
+def test_error_reports_are_never_deleted(tmp_path, monkeypatch):
     import dubber.core.utils.error_report as er
     monkeypatch.setattr(er, "errors_dir", lambda: tmp_path)
-    for i in range(er.MAX_REPORTS + 5):
-        f = tmp_path / f"old{i:02d}.txt"; f.write_text("x")
-        os.utime(f, (1000 + i, 1000 + i))
+    for i in range(40):
+        (tmp_path / f"old{i:02d}.txt").write_text("x")
     er.write_error_report(tmp_path / "v.mp4", "boom", "tb", {})
-    left = sorted(p.name for p in tmp_path.glob("*.txt"))
-    assert len(left) == er.MAX_REPORTS and "old00.txt" not in left
+    assert len(list(tmp_path.glob("*.txt"))) == 41
 
 
 def test_clean_button(win, tmp_path, monkeypatch):
@@ -380,13 +319,14 @@ def test_clean_button(win, tmp_path, monkeypatch):
     _jobs(tmp_path / "app", monkeypatch, [0, 1], size=2048)
     monkeypatch.setattr(demo, "demo_dir", lambda: tmp_path / "demos")
     (tmp_path / "demos").mkdir(); (tmp_path / "demos" / "x.wav").write_bytes(b"x" * 1024)
-    out = win._out
+    out = win._settings_dlg.storage                            # in ⚙ Cài đặt now
     out.refresh_storage()
     assert "5 KB" in out._lbl_storage.text() and out._btn_clean.isEnabled()
     out.set_busy(True)
     assert not out._btn_clean.isEnabled()                     # not while a video runs
     out.set_busy(False)
-    monkeypatch.setattr(gui.QMessageBox, "question", lambda *a, **k: gui.QMessageBox.Yes)
+    import dubber.app.settings_dialog as sd
+    monkeypatch.setattr(sd.QMessageBox, "question", lambda *a, **k: sd.QMessageBox.Yes)
     out._clean_storage()
     assert list(paths.jobs_root().iterdir()) == [] and not (tmp_path / "demos").exists()
     assert "0 B" in out._lbl_storage.text() and not out._btn_clean.isEnabled()
@@ -750,29 +690,10 @@ def test_render_kills_ffmpeg_when_progress_raises(tmp_path):
     assert procs[0].poll() is not None       # child process is gone
 
 
-# ── Waiting on the user: manual translation / Groq rate limit ─────────────────
-
-def test_manual_translation_dialog_answer_reaches_worker(win, tmp_path, monkeypatch):
-    import dubber.app.manual_dialog as md
-    vi = tmp_path / "vi.srt"
-
-    class AutoDialog:
-        def __init__(self, *a, **k): self.answer = vi
-        def exec(self): return gui.QDialog.Accepted
-    monkeypatch.setattr(md, "ManualTranslateDialog", AutoDialog)
-    _FakeWorker.answers = []
-    (m,) = _videos(tmp_path, "manual.mp4")
-    win._add_files([m])
-    gui._select_data(win._opts._combo_translator, "manual")
-    win._start()
-    _wait_idle(win)
-    assert _FakeWorker.answers == [vi]
-    assert win._jobs[0].status == "done"
-    assert _FakeWorker.runs[0][1]["translator"] == "manual"
-
+# ── Waiting on the user: Groq rate limit ──────────────────────────────────────
 
 def test_rate_limit_dialog_cancel_cancels_video(win, tmp_path, monkeypatch):
-    import dubber.app.manual_dialog as md
+    import dubber.app.wait_dialogs as md
     monkeypatch.setattr(md, "ask_rate_limit", lambda info, parent=None: None)
     (r,) = _videos(tmp_path, "ratelimit.mp4")
     win._add_files([r])
@@ -784,7 +705,7 @@ def test_rate_limit_dialog_cancel_cancels_video(win, tmp_path, monkeypatch):
 
 
 def test_rate_limit_dialog_continue(win, tmp_path, monkeypatch):
-    import dubber.app.manual_dialog as md
+    import dubber.app.wait_dialogs as md
     monkeypatch.setattr(md, "ask_rate_limit", lambda info, parent=None: "local")
     _FakeWorker.answers = []
     (r,) = _videos(tmp_path, "ratelimit.mp4")
@@ -792,20 +713,6 @@ def test_rate_limit_dialog_continue(win, tmp_path, monkeypatch):
     win._start()
     _wait_idle(win)
     assert _FakeWorker.answers == ["local"] and win._jobs[0].status == "done"
-
-
-def test_worker_manual_copies_script_and_cleans_on_cancel(tmp_path):
-    QApplication.instance() or QApplication([])
-    src = tmp_path / "clip.mp4"; src.write_bytes(b"v")
-    w = gui.PipelineWorker(src, output_dir=tmp_path / "out")
-    script = tmp_path / "script_zh.txt"; script.write_text("你好\n", encoding="utf-8")
-    asked = []
-    w.ask.connect(lambda kind, payload: (asked.append((kind, payload)), w.answer(Path("vi.txt"))))
-    assert w._manual_translate(script, 1, False, None) == Path("vi.txt")
-    dest = tmp_path / "out" / "clip_zh.txt"
-    assert dest.read_text(encoding="utf-8") == script.read_text(encoding="utf-8")
-    assert asked[0][0] == "manual" and asked[0][1]["script"] == dest
-    assert w._created == [dest]
 
 
 # ── Trim range checked before running ─────────────────────────────────────────
@@ -1026,3 +933,67 @@ def test_delete_clone_voice_button(win, voice_lib, monkeypatch):
     assert not (voice_lib / "an-000001").exists()
     assert opts._combo_voice.findData("clone:an-000001") < 0
     assert opts._combo_voice.currentData() == "preset:Hải Đăng"
+
+
+# ── Translation review ────────────────────────────────────────────────────────
+
+def test_skip_review_defaults_on_and_reaches_worker(win, tmp_path):
+    assert win._opts.get_config()["skip_review"] is True
+    cfg = win._opts.get_config()
+    del cfg["skip_review"]                       # config saved before this option
+    win._opts.set_config(cfg)
+    assert win._opts._chk_skip_review.isChecked()
+    a, b = _videos(tmp_path, "a.mp4", "b.mp4")
+    win._add_files([a, b])
+    win._list.setCurrentRow(1)
+    win._opts._chk_skip_review.setChecked(False)  # only video b stops for review
+    win._start()
+    _wait_idle(win)
+    kw = {name: k for name, k in _FakeWorker.runs}
+    assert kw["a.mp4"]["skip_review"] is True and kw["b.mp4"]["skip_review"] is False
+
+
+def test_review_dialog_answer_reaches_worker(win, tmp_path, monkeypatch):
+    import dubber.app.review_dialog as rd
+
+    class AutoDialog:
+        def __init__(self, *a, **k): self.result_vi = ["Một.", "Hai."]
+        def exec(self): return gui.QDialog.Accepted
+        def deleteLater(self): pass
+    monkeypatch.setattr(rd, "ReviewDialog", AutoDialog)
+    _FakeWorker.answers = []
+    (r,) = _videos(tmp_path, "review.mp4")
+    win._add_files([r])
+    win._start()
+    _wait_idle(win)
+    assert _FakeWorker.answers == [["Một.", "Hai."]]
+    assert win._jobs[0].status == "done"
+
+
+def test_review_dialog_cancel_cancels_video(win, tmp_path, monkeypatch):
+    import dubber.app.review_dialog as rd
+
+    class CancelDialog:
+        def __init__(self, *a, **k): self.result_vi = None
+        def exec(self): return gui.QDialog.Rejected
+        def deleteLater(self): pass
+    monkeypatch.setattr(rd, "ReviewDialog", CancelDialog)
+    (r,) = _videos(tmp_path, "review.mp4")
+    win._add_files([r])
+    win._start()
+    end = time.time() + 10
+    while (win._running >= 0 or win._cancelling) and time.time() < end:
+        QApplication.processEvents(); time.sleep(0.01)
+    assert win._jobs[0].status == "cancelled"
+
+
+def test_old_manual_translator_config_runs_as_auto(win, tmp_path):
+    cfg = dict(win._opts.get_config(), translator="manual")      # saved before removal
+    win._opts.set_config(cfg)
+    assert win._opts.translator() == "auto"
+    (a,) = _videos(tmp_path, "a.mp4")
+    win._add_files([a])
+    win._jobs[0].opts["translator"] = "manual"
+    win._start()
+    _wait_idle(win)
+    assert _FakeWorker.runs[0][1]["translator"] == "auto"

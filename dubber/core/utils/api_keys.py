@@ -93,3 +93,31 @@ def check_groq(value: str) -> None:
         if status in (401, 403):
             raise ValueError("Groq từ chối khóa này (sai hoặc đã bị thu hồi)") from None
         raise ValueError(f"Không kiểm tra được: {type(exc).__name__} — kiểm tra kết nối mạng") from None
+
+
+def ping_groq(value: str) -> str:
+    """One real, minimal translation request (1 output token) with the model Dubber uses,
+    then its fallback. Returns the model that answered; raises ValueError with a readable
+    message that never contains the key."""
+    from groq import Groq
+
+    from dubber.core.translate.groq_translator import DEFAULT_MODEL, FALLBACK_MODEL
+    client = Groq(api_key=value.strip(), max_retries=0, timeout=20)
+    last = None
+    for model in (DEFAULT_MODEL, FALLBACK_MODEL):
+        try:
+            client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": "你好"}], max_tokens=1)
+            return model
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in (401, 403):
+                raise ValueError("Groq từ chối khóa này (sai hoặc đã bị thu hồi)") from None
+            if status == 429:
+                raise ValueError("Khóa đúng nhưng đang hết hạn mức của Groq — thử lại sau") \
+                    from None
+            last = exc   # this model unavailable → try the fallback
+    status = getattr(last, "status_code", None)
+    if status is None:
+        raise ValueError("Không kết nối được Groq — kiểm tra mạng") from None
+    raise ValueError(f"Groq trả lỗi {status} ({type(last).__name__})") from None

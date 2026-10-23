@@ -25,7 +25,7 @@ class ErrorDialog(QDialog):
         self._path = Path(report_path) if report_path else None
 
         lay = QVBoxLayout(self)
-        head = QLabel(f"<b>{video}</b> không xử lý được:", self)
+        head = QLabel(f"Không xử lý được <b>{video}</b>:", self)
         lay.addWidget(head)
         msg = QLabel(message, self)
         msg.setWordWrap(True)
@@ -47,11 +47,11 @@ class ErrorDialog(QDialog):
             lay.addWidget(where)
 
         row = QHBoxLayout()
-        self.btn_copy = QPushButton("Sao chép lỗi", self)
+        self.btn_copy = QPushButton("Copy lỗi", self)
         self.btn_copy.clicked.connect(self.copy)
         row.addWidget(self.btn_copy)
         if self._path:
-            btn_open = QPushButton("Mở file lỗi", self)
+            btn_open = QPushButton("Mở báo cáo lỗi", self)
             btn_open.clicked.connect(self._open_file)
             row.addWidget(btn_open)
         row.addStretch(1)
@@ -63,8 +63,8 @@ class ErrorDialog(QDialog):
 
     def copy(self):
         QGuiApplication.clipboard().setText(self._text)
-        self.btn_copy.setText("✓ Đã sao chép")
+        self.btn_copy.setText("✓ Đã copy")
 
     def _open_file(self):
-        from dubber.app.manual_dialog import _open_text
+        from dubber.app.wait_dialogs import _open_text
         _open_text(self._path)

@@ -23,10 +23,11 @@ class Pipeline:
         self.job_dir = job_dir
         # Optional checkpoint (GUI cancel): raises JobCancelled; called inside long loops
         self.cancel_check = None
-        # GUI hooks: manual_translate(zh_txt, count, can_reuse, error) -> Path | "reuse";
-        # on_rate_limit(info) -> "continue" | "local" (Groq rate limit)
-        self.manual_translate = None
+        # GUI hook: on_rate_limit(info) -> "continue" | "local" (Groq rate limit)
         self.on_rate_limit = None
+        # review_translation(rows) -> list of Vietnamese texts (one per row): the user checks
+        # / edits translate.json before TTS. None = no review step (run straight through)
+        self.review_translation = None
         self._extractor = AudioExtractor(ffmpeg=ffmpeg, ffprobe=ffprobe)
         self._renderer = VideoRenderer(ffmpeg=ffmpeg)
 
@@ -484,38 +485,31 @@ class Pipeline:
         stored = self.job_dir / "translations" / f"{translator}.json"
         sig = {"asr": file_digest(asr_json), "translator": translator}
         cached = _translate_json_is_valid(stored) and sig_matches(stored, sig)
-        if cached and translator != "manual":   # manual: the user decides (may upload a fix)
+        if cached:
             log.info("Reusing cached translation (same ASR + translator %s)", translator)
             shutil.copyfile(stored, translate_json)
             _normalize_translate_json(translate_json)   # saved before M10 → clean it now
             write_sig(translate_json, sig)
+            self._review(translate_json, stored, sig)
             return asr_json, translate_json
 
         raw = json.loads(asr_json.read_text(encoding="utf-8"))
         asr_segments = [ASRSegment(start=r["start"], end=r["end"], text=r["src_text"] if "src_text" in r else r["text"]) for r in raw]
 
-        if translator == "manual":
-            results = self._manual_translation(asr_segments, cached)
-            if results is None:   # "reuse the previous manual translation"
-                shutil.copyfile(stored, translate_json)
-                _normalize_translate_json(translate_json)
-                write_sig(translate_json, sig)
-                return asr_json, translate_json
-        else:
-            translate_segs = make_segments(asr_segments)
-            backend = _resolve_translator(translator)
-            backend.cancel_check = self.cancel_check
-            if hasattr(backend, "on_rate_limit"):
-                backend.on_rate_limit = self.on_rate_limit
-            log.info("=== M2 translate start  %d segments  backend=%s ===",
-                     len(asr_segments), backend.__class__.__name__)
-            results = backend.translate(translate_segs)
+        translate_segs = make_segments(asr_segments)
+        backend = _resolve_translator(translator)
+        backend.cancel_check = self.cancel_check
+        if hasattr(backend, "on_rate_limit"):
+            backend.on_rate_limit = self.on_rate_limit
+        log.info("=== M2 translate start  %d segments  backend=%s ===",
+                 len(asr_segments), backend.__class__.__name__)
+        results = backend.translate(translate_segs)
 
         # Clean-up after any translator: spacing, capitals, no dangling commas; proper
         # names as Groq spelled them (other translators don't report names)
         from dubber.core.translate.base import TranslateResult
         from dubber.core.translate.normalize_vi import normalize_text
-        names = getattr(backend, "names", None) if translator != "manual" else None
+        names = getattr(backend, "names", None)
         names = names if isinstance(names, dict) else None
         src = {i: s.text for i, s in enumerate(asr_segments)}
         results = [TranslateResult(id=r.id, vi=normalize_text(r.vi, src.get(r.id, ""), names))
@@ -527,32 +521,36 @@ class Pipeline:
         shutil.copyfile(translate_json, stored)
         write_sig(stored, sig)
         log.info("=== M2 done → %s ===", translate_json)
+        self._review(translate_json, stored, sig)
         return asr_json, translate_json
 
+    def _review(self, translate_json: Path, stored: Path, sig: dict) -> None:
+        """Let the user check / edit the translation; edits also replace the stored copy,
+        so a rerun with the same translator starts from the reviewed text."""
+        if self.review_translation is None:
+            return
+        import json
+        import shutil
 
-    def _manual_translation(self, asr_segments: list, can_reuse: bool):
-        """Export the Chinese script and wait for the user's Vietnamese file.
-
-        Returns TranslateResults, or None when the user reuses the stored translation.
-        """
-        from dubber.core.translate.base import TranslateResult
-        from dubber.core.translate.manual import parse_vietnamese, write_script_txt
-
-        if self.manual_translate is None:
-            raise RuntimeError("Dịch thủ công chỉ dùng được trong giao diện (GUI)")
-        script = write_script_txt(asr_segments, self.job_dir / "script_zh.txt")
-        log.info("=== M2 manual: %d câu → %s, chờ file tiếng Việt ===", len(asr_segments), script)
-        error = None
-        while True:
-            answer = self.manual_translate(script, len(asr_segments), can_reuse, error)
-            if answer == "reuse" and can_reuse:
-                return None
-            try:
-                lines = parse_vietnamese(Path(answer), len(asr_segments))
-            except (OSError, ValueError) as exc:
-                error = str(exc)   # ask again, showing what was wrong
-                continue
-            return [TranslateResult(id=i, vi=t) for i, t in enumerate(lines)]
+        from dubber.core.translate.normalize_vi import normalize_text
+        rows = json.loads(translate_json.read_text(encoding="utf-8"))
+        edited = self.review_translation([dict(r) for r in rows])
+        changed = 0
+        for row, vi in zip(rows, edited or []):
+            vi = normalize_text(vi, row.get("src_text", ""))
+            if vi != row.get("vi_text", ""):
+                row["vi_text"] = vi
+                changed += 1
+        if not changed:
+            log.info("Review: bản dịch giữ nguyên")
+            return
+        translate_json.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
+        write_sig(translate_json, sig)
+        stored.parent.mkdir(exist_ok=True)
+        shutil.copyfile(translate_json, stored)
+        write_sig(stored, sig)
+        log.info("Review: đã sửa %d/%d câu", changed, len(rows))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

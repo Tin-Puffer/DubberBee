@@ -1,6 +1,6 @@
-# Hướng dẫn sử dụng Dubber
+# Hướng dẫn sử dụng Dubber Bee
 
-Dubber tự động **lồng tiếng Việt cho video tiếng Trung**: nghe tiếng Trung trong video, dịch
+Dubber Bee tự động **lồng tiếng Việt cho video tiếng Trung**: nghe tiếng Trung trong video, dịch
 sang tiếng Việt, đọc lại bằng giọng tiếng Việt, rồi xuất ra video mới có giọng Việt và phụ đề
 Việt. Phần lớn chạy ngay trên máy của bạn, không cần mạng (trừ khi dịch bằng Groq).
 
@@ -18,7 +18,7 @@ Tài liệu kỹ thuật cho người phát triển: xem [TECHNICAL.md](TECHNICA
 6. [Tab "Giọng & dịch"](#6-tab-giọng--dịch)
 7. [Tab "Phụ đề"](#7-tab-phụ-đề)
 8. [Tab "Xuất video"](#8-tab-xuất-video)
-9. [Lưu video kết quả, bộ nhớ tạm, thư mục làm việc](#9-lưu-video-kết-quả-bộ-nhớ-tạm-thư-mục-làm-việc)
+9. [Lưu video kết quả & ⚙ Cài đặt](#9-lưu-video-kết-quả---cài-đặt)
 10. [Chạy, theo dõi, dừng, hủy, chạy lại](#10-chạy-theo-dõi-dừng-hủy-chạy-lại)
 11. [Các hộp thoại xuất hiện khi đang chạy](#11-các-hộp-thoại-xuất-hiện-khi-đang-chạy)
 12. [Khi có lỗi](#12-khi-có-lỗi)
@@ -60,20 +60,23 @@ source .venv/bin/activate
 python -m dubber
 ```
 
-### Khóa Groq (chỉ cần nếu dịch bằng Groq)
+### Groq API key (chỉ cần nếu dịch bằng Groq)
 
 Groq là dịch vụ dịch online, chất lượng tốt nhất, miễn phí có giới hạn.
 
 1. Lấy khóa tại [console.groq.com/keys](https://console.groq.com/keys) → *Create API Key* →
    sao chép khóa (dạng `gsk_…`).
-2. Trong Dubber: tab **Giọng & dịch** → dòng **Khóa Groq** → bấm **🔑 Đặt khóa Groq…**
-3. Dán khóa vào ô (bấm **Hiện** để xem lại), bấm **Kiểm tra** để chắc khóa dùng được, rồi **Lưu**.
+2. Trong Dubber Bee: bấm **⚙ Cài đặt** (góc trên bên phải) → mục **Groq API key** → **🔑 Nhập API key…**
+3. Dán khóa vào ô (bấm **Hiện** để xem lại), rồi **Lưu**.
+4. Bấm **Kiểm tra** cạnh khóa: app gửi thử một yêu cầu dịch rất nhỏ tới Groq. Đèn **xanh** = khóa
+   chạy được; **đỏ** = lỗi, lý do hiện ngay bên cạnh (khóa sai, hết hạn mức, mất mạng…).
 
-Xong — chỉ cần làm **một lần**, app nhớ khóa cho mọi lần mở sau. Dòng *Khóa Groq* hiện
-**"✓ Đã lưu (gsk_…abcd)"** (chỉ hiện 4 ký tự đầu và cuối).
+Xong — chỉ cần làm **một lần**, app nhớ khóa cho mọi lần mở sau. Mục *Groq API key* hiện
+**"✓ Đã lưu (gsk_…abcd)"** (chỉ hiện 4 ký tự đầu và cuối). Nút **Groq ●** ở góc trên cùng
+có màu theo đèn (xám = chưa kiểm tra), bấm vào để mở Cài đặt.
 
 - Khóa được cất trong **kho mật khẩu của máy** (macOS Keychain / Windows Credential Manager),
-  không nằm trong file nào của Dubber, không ghi vào log hay báo cáo lỗi.
+  không nằm trong file nào của Dubber Bee, không ghi vào log hay báo cáo lỗi.
 - Muốn bỏ khóa: mở lại hộp thoại → **Xóa khóa đã lưu**.
 - Người dùng nâng cao vẫn có thể đặt biến môi trường `GROQ_API_KEY`; khóa lưu trong app được
   ưu tiên hơn.
@@ -83,43 +86,53 @@ Xong — chỉ cần làm **một lần**, app nhớ khóa cho mọi lần mở 
 ## 2. Làm quen với màn hình
 
 ```
-┌────────────────────────────── Dubber  ZH → VI ──────────────────────────────┐
-│ [ Kéo thả video vào đây … hoặc click để chọn ]  │  Cấu hình cho <video>      │
-│                                                 │  [Âm thanh][Giọng & dịch]  │
-│ Hàng đợi                                        │  [Phụ đề][Xuất video]      │
-│  ⏳ video1.mp4                                   │   … các tùy chọn …         │
-│  ✓ video2.mp4                                   │                            │
-│ [Áp dụng cho tất cả][↻ Chạy lại][Xoá][Xoá xong] │  Tiến trình                │
-│                                                 │   ○ Tách nhạc/giọng        │
-│ Thông tin video gốc                             │   ○ Nhận dạng giọng nói    │
-│ Lưu video kết quả                               │   ○ Dịch thuật …           │
-│  Bộ nhớ tạm … [📁 Thư mục làm việc…][Dọn ngay]  │                            │
-├─────────────────────────────────────────────────┴────────────────────────────┤
-│ [▶ Chạy hàng đợi] [⏹ Dừng sau video này] [✖ Hủy video này] [📂 Mở thư mục]    │
-│ dòng trạng thái                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────── Dubber Bee · Lồng tiếng Trung → Việt ─────────────────────┐
+│                                                             [Groq ●] [Cài đặt] │
+├──────────────────────────────────────────────────┬─────────────────────────────┤
+│ [ + Thêm video — kéo thả hoặc bấm để chọn ]      │ Cấu hình cho <video>        │
+│ Hàng đợi   3 video · 1 xong · 1 đang chạy …      │ [Âm thanh][Giọng & dịch]    │
+│  ▶ video1.mp4         2:00 · 1080p · 22 MB       │ [Phụ đề][Xuất video]        │
+│    Tạo giọng Việt · tổng 45% · còn ~6 phút       │   … các tùy chọn …          │
+│  ✓ video2.mp4   [Xem][TikTok][Thư mục][↻]        │                             │
+│ [Áp dụng cho tất cả][Chạy lại][Xóa][Dọn]         │ Tiến trình · 45% · còn …    │
+│ Thông tin video gốc       [ảnh + phụ đề mẫu]     │  ✓ Tách nhạc nền       0:42 │
+│ Lưu video kết quả                                │  ◉ Tạo giọng Việt      1:10 │
+├──────────────────────────────────────────────────┴─────────────────────────────┤
+│ [▶ Chạy hàng đợi] [Dừng sau video này] [Hủy video này] [Mở thư mục]            │
+│ dòng trạng thái                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Bên trái:** thêm video, danh sách hàng đợi, thông tin video đang chọn, nơi lưu kết quả.
+- **Góc trên:** **⚙ Cài đặt** (Groq API key, thông báo, prompt AI, cache) và nút
+  **Groq ●** cho biết Groq API key còn chạy được không.
+- **Bên trái:** thêm video, hàng đợi (mỗi video một thẻ), thông tin + ảnh xem trước của video
+  đang chọn, nơi lưu kết quả.
 - **Bên phải:** cấu hình của **video đang chọn** (4 tab) và tiến trình chạy.
 - **Dưới cùng:** nút chạy / dừng / hủy / mở thư mục kết quả, và dòng trạng thái.
+
+App **nhớ** kích thước cửa sổ, tab đang mở và **hàng đợi** khi tắt; mở lại là thấy như cũ (video
+đang chạy dở được đưa về "chờ chạy"; video đã bị xóa / di chuyển thì bỏ qua).
 
 Dưới mỗi lựa chọn có **một dòng chữ nhỏ** giải thích chọn như vậy được gì, mất gì. Rê chuột
 lên lựa chọn cũng thấy giải thích đó.
 
-Ký hiệu trong hàng đợi: **⏳** đang chờ · **▶** đang chạy · **✓** xong · **✗** lỗi · **⊘** đã hủy.
+**Lăn chuột không đổi giá trị** của ô chọn, ô số hay thanh trượt (tránh đổi nhầm khi cuộn
+trang) — lăn chuột chỉ cuộn trang. Muốn đổi: bấm chọn, gõ số, dùng ▲▼ hoặc kéo thanh trượt.
+
+Ký hiệu trong hàng đợi: **⏳** đang chờ · **▶** đang chạy · **✋** đang chờ bạn (duyệt bản
+dịch, chọn file…) · **✓** xong · **✗** lỗi · **⊘** đã hủy.
 
 ---
 
 ## 3. Lồng tiếng nhanh trong 5 bước
 
 1. **Kéo thả video** vào ô "Kéo thả video vào đây" (hoặc bấm vào ô để chọn file).
-2. Tab **Giọng & dịch**: chọn **Bộ đọc** và **Giọng đọc** (bấm **▶ Nghe thử** để nghe), chọn
-   **Dịch thuật** (mặc định "Tự động").
+2. Tab **Giọng & dịch**: chọn **TTS engine** và **Giọng đọc** (bấm **▶ Nghe thử** để nghe), chọn
+   **Dịch** (mặc định "Tự động").
 3. Tab **Âm thanh**: chỉnh độ to giọng Việt / nhạc nền / tiếng Trung nếu muốn
    (mặc định: giọng Việt 100%, nhạc nền 40%, tiếng Trung 20%).
 4. Bấm **▶ Chạy hàng đợi** và theo dõi phần **Tiến trình**.
-5. Xong, bấm **📂 Mở thư mục** để thấy video `<tên gốc>_vi.mp4`.
+5. Xong, bấm **📂 Mở thư mục kết quả** để thấy video `<tên gốc>_vi.mp4`.
 
 ---
 
@@ -138,22 +151,45 @@ Ký hiệu trong hàng đợi: **⏳** đang chờ · **▶** đang chạy · **
 
 - Bấm vào một video trong hàng đợi → bên phải hiện "Cấu hình cho **<tên video>**". Mọi thay
   đổi chỉ áp dụng cho video đó.
-- **Áp dụng cấu hình này cho tất cả:** chép cấu hình đang hiện cho mọi video **đang chờ**.
+- **Áp dụng cho tất cả:** chép cấu hình đang hiện cho mọi video **đang chờ**.
 - Video **đang chạy** không sửa được cấu hình. Video đã xong / lỗi / đã hủy vẫn sửa được.
+
+### Thẻ video
+
+Mỗi video là một thẻ 2 dòng: tên + thời lượng · độ phân giải · dung lượng, rồi trạng thái và
+**các nút hợp với trạng thái đó**:
+
+| Trạng thái | Dòng thứ hai | Nút trên thẻ |
+|---|---|---|
+| ⏳ Chờ chạy | bộ dịch · giọng đọc (· duyệt bản dịch) | ✕ xóa |
+| ▶ Đang chạy | bước đang làm · % tổng · đã chạy · còn bao lâu | ⊘ Hủy |
+| ✋ Chờ bạn | việc đang chờ bạn | — |
+| ✓ Xong | giờ xong · chạy hết bao lâu · dung lượng | ▶ Xem · 📋 TikTok · 📂 · ↻ |
+| ✗ Lỗi | thông báo lỗi | Xem lỗi · ↻ Thử lại |
+
+- **📋 TikTok** chép sẵn prompt TikTok kèm lời thoại vào clipboard — dán thẳng vào ChatGPT.
+- **Chuột phải** vào thẻ: Xem video, Copy prompt TikTok, Mở file .txt, Hiện trong Finder, Mở
+  thư mục tạm, Chạy lại, **Nhân bản** (chạy cùng video với cấu hình khác, giữ bản cũ), Áp cấu
+  hình cho các video đã chọn, Xóa.
+- **Chọn nhiều:** giữ Cmd (Windows: Ctrl) hoặc Shift khi bấm → Xóa / Chạy lại / áp cấu hình
+  cho cả nhóm.
+- **Kéo thả thẻ** lên / xuống để đổi thứ tự chạy.
 
 ### Các nút dưới hàng đợi
 
 | Nút | Tác dụng |
 |---|---|
-| **Áp dụng cấu hình này cho tất cả** | Chép cấu hình cho mọi video đang chờ |
-| **↻ Chạy lại** | Đưa video đang chọn (đã xong / lỗi / đã hủy) về hàng đợi |
-| **Xoá** | Bỏ video đang chọn khỏi hàng đợi (không xóa file gốc) |
-| **Xoá xong/lỗi** | Bỏ khỏi danh sách mọi video đã xong / lỗi / đã hủy |
+| **Áp dụng cho tất cả** | Chép cấu hình cho mọi video đang chờ |
+| **↻ Chạy lại** | Đưa các video đang chọn (đã xong / lỗi / đã hủy) về hàng đợi |
+| **Xóa** | Bỏ các video đang chọn khỏi hàng đợi (không xóa file gốc) |
+| **Dọn video đã xong** | Bỏ khỏi danh sách mọi video đã xong / lỗi / đã hủy |
 
 ### Thông tin video gốc
 
 Khi chọn một video: độ phân giải, số khung hình/giây, thời lượng, dung lượng, mã hóa video
-và âm thanh của file gốc.
+và âm thanh của file gốc. Bên phải là **một khung hình của video với phụ đề mẫu** vẽ theo cài
+đặt ở tab Phụ đề (font, cỡ, màu, viền, vị trí, vùng mờ) — đổi gì thấy ngay. Đây là bản xem
+nhanh **gần đúng**; muốn xem chính xác: tab Phụ đề → **Xem trước trên video…**.
 
 ---
 
@@ -169,16 +205,16 @@ Quyết định video kết quả gồm những âm thanh nào và to nhỏ ra s
 
 - 100% = giữ nguyên độ to của âm thanh gốc.
 - Nếu **nhạc nền và tiếng Trung khác mức nhau** (hoặc chỉ giữ một trong hai), app phải **tách
-  nhạc khỏi giọng bằng AI** (bước "Tách nhạc/giọng" trong Tiến trình) — chậm hơn một chút.
+  nhạc khỏi giọng bằng AI** (bước "Tách nhạc nền" trong Tiến trình) — chậm hơn một chút.
   Hai mức bằng nhau thì dùng thẳng âm thanh gốc, không cần tách.
 
 ---
 
 ## 6. Tab "Giọng & dịch"
 
-### 6.1 Bộ đọc
+### 6.1 TTS engine
 
-| Bộ đọc | Ưu | Nhược |
+| TTS engine | Ưu | Nhược |
 |---|---|---|
 | **Piper** | Nhanh, gần như tức thì; tối đa 16 giọng (tùy bản cài) | Giọng hơi đều, máy móc |
 | **VieNeu-TTS** | Giọng tự nhiên hơn; 25 giọng có sẵn; **clone được giọng riêng** | Xử lý lâu hơn (video 1 phút ≈ 15–20 giây đọc trên Mac M-series) |
@@ -199,14 +235,14 @@ Nếu VieNeu-TTS hiện "— chưa cài" và không chọn được: bản cài 
 
 Tạo giọng đọc giống giọng một người từ một đoạn ghi âm ngắn.
 
-1. Chọn **Bộ đọc: VieNeu-TTS**, rồi trong ô Giọng đọc chọn **➕ Clone giọng mới…**
+1. Chọn **TTS engine: VieNeu-TTS**, rồi trong ô Giọng đọc chọn **➕ Clone giọng mới…**
 2. Bấm **Chọn…** và chọn file **ghi âm hoặc video** (`.wav .mp3 .m4a .flac .ogg .mp4 .mkv
    .mov .avi .webm`). Hộp thoại hiện **Thời lượng**.
 3. **Bắt đầu từ:** nếu file dài hơn 8 giây, chọn giây bắt đầu của đoạn mẫu. App chỉ dùng
    **8 giây** tính từ mốc này (VieNeu chỉ dùng tối đa 8 giây — đưa dài hơn không tốt hơn).
    Ngắn hơn 3 giây sẽ có cảnh báo "Đoạn quá ngắn, giọng sẽ kém giống".
 4. **▶ Nghe thử:** nghe đúng đoạn 8 giây sẽ dùng.
-5. **🔊 Đọc thử:** nghe câu *"Xin chào, đây là giọng đọc thử nghiệm."* bằng giọng mới
+5. **🔊 Nghe thử:** nghe câu *"Xin chào, đây là giọng đọc thử nghiệm."* bằng giọng mới
    (vài giây; lần đầu lâu hơn).
 6. Đặt **Tên giọng** (không trùng tên giọng khác) → **Lưu**. Giọng mới được chọn ngay.
 
@@ -227,45 +263,47 @@ Giọng có sẵn của VieNeu không xóa được. Nếu một video trong hà
 xóa, ô giọng của video đó hiện **"⚠ Giọng đã bị xóa"** và khi chạy sẽ báo lỗi rõ ràng — chọn
 giọng khác cho video đó.
 
-### 6.5 Dịch thuật
+### 6.5 Dịch
 
 | Lựa chọn | Khi nào dùng |
 |---|---|
 | **Tự động (Groq → offline)** | Mặc định. Dùng Groq; mất mạng / không có khóa / lỗi thì tự chuyển sang MarianMT |
-| **Groq (online)** | Dịch hay nhất. Cần mạng và khóa Groq (dòng **Khóa Groq** → **🔑 Đặt khóa Groq…**, xem §1) |
+| **Groq (online)** | Dịch hay nhất. Cần mạng và Groq API key (**⚙ Cài đặt → 🔑 Nhập API key…**, xem §1) |
 | **Offline — MarianMT (~300 MB)** | Không cần mạng, nhanh, dịch kém hơn |
 | **Offline — NLLB 1.3B (~5.5 GB)** | Không cần mạng, chậm, lần đầu tải ~5,5 GB, cần ~6 GB RAM. Chất lượng thực tế vẫn kém Groq rõ rệt |
-| **Thủ công — tự dịch file** | Bạn tự dịch (hoặc nhờ người / công cụ khác), app đọc theo bản dịch của bạn |
 
-### 6.6 Dịch thủ công — từng bước
+### 6.6 Duyệt bản dịch & nhờ chatbot sửa
 
-1. Chọn **Dịch thuật: Thủ công — tự dịch file**, rồi **▶ Chạy hàng đợi**.
-2. Sau bước nhận dạng giọng nói, app xuất file **`<tên video>_zh.txt`** vào **nơi lưu video
-   kết quả** (mặc định: cạnh video gốc) và hiện hộp thoại **"Dịch thủ công"**:
-   - **Mở file:** mở file tiếng Trung bằng TextEdit / Notepad.
-   - **Mở thư mục:** mở nơi chứa file.
-3. File tiếng Trung có **mỗi dòng một câu**. Dịch sang tiếng Việt và lưu thành một file
-   **`.txt` khác**, **mỗi dòng một câu, đúng thứ tự, đủ số dòng** (dòng 1 là câu 1…).
-   Ví dụ file tiếng Trung có 21 dòng thì file tiếng Việt cũng phải có 21 dòng (dòng trống
-   không tính).
-   - TextEdit (macOS): trước khi lưu chọn **Định dạng → Tạo văn bản thường**, nếu không
-     TextEdit sẽ lưu `.rtf`.
-   - Có thể đánh số đầu dòng ("1. …", "2) …") — app tự bỏ số.
-4. Trong hộp thoại bấm **Chọn file tiếng Việt…** và chọn file vừa lưu. App chạy tiếp.
-5. Nếu file sai số dòng, hộp thoại hiện lại với dòng chữ đỏ, ví dụ *"File có 19 dòng, cần đúng
-   21 dòng"* — sửa file rồi chọn lại.
-6. Lần sau chạy lại **cùng video, cùng đoạn cắt**, hộp thoại có thêm nút **Dùng lại bản dịch
-   trước**.
-7. Muốn bỏ video này: bấm **Hủy video này**.
+Ô **Duyệt bản dịch: "Bỏ qua (chạy tự động, không dừng)"** được **tích sẵn**: app chạy một mạch
+từ đầu tới cuối — hợp với video dài (2–3 tiếng) bạn không ngồi canh.
 
-> Trong lúc hộp thoại đang mở, video đứng chờ bạn; bạn có thể dịch bao lâu cũng được.
+**Bỏ tích** để dịch xong thì app **dừng lại** mở bảng **"Duyệt bản dịch"** (kèm thông báo nếu
+bạn đang ở cửa sổ khác), rồi mới đọc tiếng Việt:
 
-### 6.7 Nhận diện — "Lọc nhạc trước khi nhận diện"
+- Bảng gồm số câu, thời gian, câu Trung, câu Việt và cột **⚠ Cần chú ý** (câu trống, còn chữ
+  Hán, hoặc **quá dài** so với thời gian được nói). *Chỉ hiện câu cần chú ý* / ô **Tìm** giúp
+  lọc nhanh.
+- **Bấm đúp** ô tiếng Việt để sửa. **↶ Hoàn tác** (Cmd+Z) bỏ thay đổi gần nhất.
+- **▶ Nghe câu gốc** phát đoạn tiếng Trung của câu đang chọn; **🔊 Nghe thử** đọc câu tiếng Việt
+  bằng giọng của video đó.
+- **📋 Copy cho AI**: chép lời dặn + các câu (tất cả / câu đang chọn / câu cần chú ý /
+  *phần tiếp theo* 150 câu một lần) → dán vào ChatGPT / Claude / Gemini.
+- **📥 Dán kết quả AI**: dán câu trả lời của chatbot (dạng `[12] câu tiếng Việt`), xem
+  trước *cũ → mới*, bỏ tích câu không muốn, **Áp dụng**. Câu chatbot không nhắc tới giữ nguyên.
+- **✎ Prompt…** (hoặc *⚙ Cài đặt → Chatbot*): sửa lời dặn đặt ở đầu khi sao chép; app
+  nhớ cho lần sau. Xóa trắng = dùng lời dặn mặc định.
+- **Tiếp tục ▶**: đọc tiếng Việt và xuất video. Câu không sửa dùng lại giọng đã đọc (nhanh).
+  Bản đã sửa được nhớ: chạy lại cùng video với cùng bộ dịch sẽ bắt đầu từ bản đã sửa.
+- **Hủy video này**: bỏ video (có hỏi lại nếu bạn đã sửa).
+
+Thời gian bạn duyệt **không tính** vào thời gian chạy / thời gian còn lại.
+
+### 6.7 Nhận dạng — "Lọc nhạc nền trước khi nhận dạng"
 
 Bật (mặc định): app tách giọng nói khỏi nhạc nền trước khi nghe tiếng Trung → **nghe chính xác
 hơn với video có nhạc**, chậm hơn một chút (~25 giây với video 2 phút). Nên để bật.
 
-### 6.8 Cắt video — chỉ xử lý một đoạn
+### 6.8 Trim — chỉ xử lý một đoạn
 
 Dùng để thử nhanh trên một đoạn ngắn trước khi chạy cả video.
 
@@ -294,7 +332,7 @@ Kết quả có tên như bình thường (`<tên>_vi.mp4`) nhưng chỉ gồm �
 
 | Tùy chọn | Ý nghĩa |
 |---|---|
-| **Đốt phụ đề tiếng Việt vào video** | Chèn phụ đề Việt vào hình (luôn hiện, không tắt được khi xem) |
+| **Chèn phụ đề tiếng Việt vào video** | Chèn phụ đề Việt vào hình (luôn hiện, không tắt được khi xem) |
 | **Font chữ** | Arial, Be Vietnam Pro, Roboto, Montserrat, Nunito, Lexend, Noto Sans |
 | **Cỡ chữ** | 20–120 (tính trên khung 1080p, tự co theo độ phân giải video) |
 | **Xem trước trên video…** | Mở khung xem trước đúng như video xuất ra |
@@ -302,8 +340,8 @@ Kết quả có tên như bình thường (`<tên>_vi.mp4`) nhưng chỉ gồm �
 | **Màu chữ / Màu viền** | Bấm để chọn màu (mặc định chữ trắng, viền đen) |
 | **Độ dày viền** | 0–8 px (0 = không viền) |
 | **Nền chữ** | *Hộp nền tối sau chữ* — thêm hộp đen mờ sau chữ như kiểu cũ |
-| **Che sub gốc** | Chọn **một** trong ba: *Tắt*; *Tự động* — vùng mờ ôm dòng phụ đề Việt dài nhất (cộng **Lề vùng mờ**), hiện suốt video; *Thủ công* → **Chọn vùng…** — tự kéo một vùng cố định suốt video |
-| **Lề vùng mờ** | 0–40 px mỗi phía quanh dòng phụ đề (chỉ cho chế độ *Tự động*) |
+| **Che phụ đề gốc** | Chọn **một** trong ba: *Tắt*; *Tự động* — vùng mờ ôm dòng phụ đề Việt dài nhất (cộng **Lề vùng làm mờ**), hiện suốt video; *Thủ công* → **Chọn vùng…** — tự kéo một vùng cố định suốt video |
+| **Lề vùng làm mờ** | 0–40 px mỗi phía quanh dòng phụ đề (chỉ cho chế độ *Tự động*) |
 
 Phụ đề luôn hiện **một dòng**: câu dài được cắt thành nhiều dòng nối tiếp, ở chỗ ngắt tự nhiên
 (dấu phẩy, trước "chính là", "nhưng", "để"…), không cắt giữa một từ. Mỗi dòng viết hoa chữ đầu và
@@ -321,8 +359,8 @@ trong hàng đợi trước.)
 - **Font / Cỡ chữ:** đổi và xem ngay.
 - **Kéo chọn vùng làm mờ:** kéo chuột trên ảnh để vẽ vùng mờ (khung đỏ).
 - **Bấm chọn tâm phụ đề:** bấm (hoặc kéo) để đặt vị trí phụ đề (khung xanh).
-- **Xoá vùng mờ** / **Phụ đề về mặc định**.
-- **Xong** để lưu, **Huỷ** để bỏ.
+- **Xóa vùng mờ** / **Phụ đề về mặc định**.
+- **Xong** để lưu, **Hủy** để bỏ.
 
 Ảnh xem trước được vẽ giống hệt video xuất ra.
 
@@ -333,52 +371,81 @@ trong hàng đợi trước.)
 | Tùy chọn | Gợi ý |
 |---|---|
 | **Độ phân giải** | *Gốc* giữ nguyên. Thấp hơn (1080p/720p/480p/360p) = file nhỏ hơn, xuất nhanh hơn |
-| **Khung hình/giây** | Để *Gốc* nếu không cần đổi |
+| **FPS** | Để *Gốc* nếu không cần đổi |
 | **Chất lượng** | Cao (CRF 18) · Tốt (CRF 23, mặc định) · Cân bằng (CRF 28) · Nhỏ gọn (CRF 35). Cao = nét hơn nhưng file nặng hơn |
-| **Tốc độ mã hoá** | Rất nhanh → Chậm. Nhanh = xuất lẹ nhưng file nặng hơn; chậm = file nhẹ hơn |
-| **Âm thanh** | 96–320 kbps; 192 kbps (mặc định) là đủ cho giọng nói |
+| **Encoder preset** | Rất nhanh → Chậm. Nhanh = xuất lẹ nhưng file nặng hơn; chậm = file nhẹ hơn |
+| **Audio bitrate** | 96–320 kbps; 192 kbps (mặc định) là đủ cho giọng nói |
 
 ---
 
-## 9. Lưu video kết quả, bộ nhớ tạm, thư mục làm việc
+## 9. Lưu video kết quả & ⚙ Cài đặt
 
 ### Nơi lưu video
 
 - **Lưu cạnh video gốc** (mặc định): kết quả nằm cùng thư mục với video gốc.
 - Bỏ tích → **Chọn…** một thư mục khác. App nhớ lựa chọn này.
-- Tên file: **`<tên gốc>_vi.mp4`**. Nếu đã có file trùng tên, app đặt `… (2).mp4`, `… (3).mp4`
-  — **không bao giờ ghi đè**.
+- Tên file: **`<tên gốc>_vi.mp4`** (kèm **`<tên gốc>_vi.txt`** — prompt TikTok, xem §10). Nếu
+  đã có file trùng tên, app đặt `… (2).mp4`, `… (3).mp4` — **không bao giờ ghi đè**.
 
-### Bộ nhớ tạm
+### ⚙ Cài đặt
 
-Dòng **"Bộ nhớ tạm: … MB · tự dọn sau 7 ngày / 5 GB"** cho biết dung lượng file tạm. File tạm
-giúp **chạy lại cùng video nhanh hơn** (không phải nhận dạng / dịch lại).
+Nút **⚙ Cài đặt** ở góc trên bên phải (hoặc bấm chip **Groq ●**) gồm những thiết lập dùng chung
+cho cả app; mọi thay đổi được **lưu lại** cho các lần mở sau:
 
-- **Tự động dọn:** sau mỗi lần chạy app tự xóa phần lớn file tạm (video 2 phút: ~200 MB còn
-  ~50 MB), và chỉ giữ tối đa **10 video gần nhất, tổng ≤ 5 GB, không quá 7 ngày**.
-- **Dọn ngay:** xóa toàn bộ file tạm (có hỏi xác nhận). Không ảnh hưởng video đã xuất và giọng
+| Mục | Nội dung |
+|---|---|
+| **Groq API key** | Trạng thái key, **Kiểm tra** (đèn xanh / đỏ), **🔑 Nhập API key…** (xem §1) |
+| **Thông báo** | Bật / tắt thông báo khi video xong, lỗi hoặc cần bạn |
+| **Prompt AI** | Hai prompt bạn có thể tùy chỉnh theo phong cách riêng (xem bên dưới) |
+| **Cache** | Dung lượng cache, **📁 Workspace…**, **Dọn cache** |
+
+#### Prompt AI
+
+| Prompt | Dùng khi nào |
+|---|---|
+| **Prompt sửa bản dịch** | Đặt ở đầu khi bấm **📋 Copy cho AI** trong cửa sổ *Duyệt bản dịch* (§6.6) |
+| **Prompt TikTok (tiêu đề, mô tả, hashtag)** | Ghi vào file `<tên gốc>_vi.txt` cạnh video và chép khi bấm **📋 TikTok** trên thẻ video |
+
+- **✎ Sửa…** mở trình soạn thảo; **Lưu** để áp dụng. Bên cạnh tên hiện **mặc định** hoặc
+  **đã tùy chỉnh**.
+- **↺ Mặc định** (hoặc *↺ Khôi phục mặc định* trong trình soạn thảo) đưa prompt về bản gốc
+  của app.
+- Prompt TikTok: dòng `<<< DÁN LỜI THOẠI VÀO ĐÂY >>>` là chỗ app chèn lời thoại. Nếu bạn xóa
+  dòng này, lời thoại được thêm vào cuối prompt.
+- Prompt sửa bản dịch: nên giữ yêu cầu AI trả lời dạng `[12] câu tiếng Việt` để **📥 Dán kết quả
+  AI** đọc được.
+
+### Cache
+
+Nằm trong **⚙ Cài đặt → Cache**. Dòng **"Cache: … MB · không tự xóa"** cho biết dung lượng
+cache (file tạm của từng video). Cache giúp **chạy lại cùng video nhanh hơn** (không phải nhận
+dạng / dịch lại).
+
+- **Không tự xóa:** app giữ nguyên cache cho tới khi bạn bấm **Dọn cache**. Video dài có thể
+  chiếm vài GB mỗi video — nhớ dọn khi ổ đĩa sắp đầy.
+- **Dọn cache:** xóa toàn bộ cache (có hỏi xác nhận). Không ảnh hưởng video đã xuất và giọng
   đã clone. Nút bị khóa khi đang có video chạy.
 
-### 📁 Thư mục làm việc…
+### 📁 Workspace… (trong ⚙ Cài đặt → Cache)
 
-Mở hộp thoại cho biết Dubber lưu file ở đâu:
+Mở hộp thoại cho biết Dubber Bee lưu file ở đâu:
 
 | Dòng | Nút |
 |---|---|
-| **File tạm của video** | **Mở**, **Đổi…**, **Mặc định** |
+| **Cache của video** | **Mở**, **Đổi…**, **Mặc định** |
 | **Log & báo cáo lỗi** | **Mở**, **Báo cáo lỗi**, **Đổi…**, **Mặc định** |
 | **Giọng đã clone** | **Mở** |
-| **Model đã tải** | **Mở** |
+| **Model** | **Mở** |
 
 - **Mở:** mở thư mục trong Finder / Explorer để xem hoặc xóa bằng tay.
-- **Đổi…:** chuyển sang thư mục khác (ví dụ ổ ngoài nếu ổ máy sắp đầy). Khi đổi chỗ để file
-  tạm, app hỏi có chuyển các file tạm hiện có sang không.
+- **Đổi…:** chuyển sang thư mục khác (ví dụ ổ ngoài nếu ổ máy sắp đầy). Khi đổi chỗ để cache,
+  app hỏi có chuyển cache hiện có sang không.
 - **Mặc định:** quay về chỗ cũ.
 - Không đổi được khi đang có video chạy.
 
-> An toàn: nếu bạn chọn một thư mục có sẵn đồ (ví dụ *Desktop*), Dubber chỉ tạo và làm việc
-> trong thư mục con riêng **`Dubber workspace`** / **`Dubber logs`**. Việc tự dọn và nút
-> "Dọn ngay" không bao giờ xóa file khác của bạn.
+> An toàn: nếu bạn chọn một thư mục có sẵn đồ (ví dụ *Desktop*), Dubber Bee chỉ tạo và làm việc
+> trong thư mục con riêng **`Dubber workspace`** / **`Dubber logs`**. Nút "Dọn cache" không
+> bao giờ xóa file khác của bạn.
 
 ---
 
@@ -392,14 +459,23 @@ Bấm **▶ Chạy hàng đợi**: các video **đang chờ** chạy lần lư�
 
 | Bước | Việc đang làm |
 |---|---|
-| **Tách nhạc/giọng** | Tách giọng khỏi nhạc (bỏ qua nếu không cần) |
+| **Tách nhạc nền** | Tách giọng khỏi nhạc (bỏ qua nếu không cần) |
 | **Nhận dạng giọng nói** | Nghe tiếng Trung, chia câu |
-| **Dịch thuật** | Dịch sang tiếng Việt |
-| **Tổng hợp giọng Việt** | Đọc từng câu tiếng Việt (có % tiến độ) |
+| **Dịch** | Dịch sang tiếng Việt |
+| **Tạo giọng Việt (TTS)** | Đọc từng câu tiếng Việt (có % tiến độ) |
 | **Ghép âm thanh** | Ghép giọng Việt theo đúng thời điểm |
-| **Xuất video cuối** | Trộn âm, chèn phụ đề, làm mờ, xuất file (có % tiến độ) |
+| **Render video** | Trộn âm, chèn phụ đề, làm mờ, xuất file (có % tiến độ) |
 
-Dòng trạng thái dưới cùng cho biết video nào đang ở bước nào.
+- Tiêu đề khung *Tiến trình* hiện **% tổng**, **thời gian đã chạy** và **thời gian còn lại
+  (ước tính)**; mỗi bước có thời gian đã chạy ở cuối dòng. Ước tính chính xác dần sau vài phút.
+- Thời gian **chờ bạn** (duyệt bản dịch, chọn file) không tính vào thời gian chạy.
+- Thẻ của video đang chạy cũng hiện bước, % tổng và thời gian còn lại.
+
+### Thông báo
+
+Khi video **xong**, **lỗi**, hoặc **cần bạn** (duyệt bản dịch, chọn file, Groq giới hạn), app
+hiện thông báo của hệ thống và biểu tượng nhảy trên Dock (Windows: nháy trên thanh tác vụ) —
+chỉ khi bạn đang ở cửa sổ khác. Tắt / bật trong **⚙ Cài đặt → Thông báo**.
 
 ### Dừng và hủy
 
@@ -418,17 +494,23 @@ Dòng trạng thái dưới cùng cho biết video nào đang ở bước nào.
 
 ### Mở kết quả
 
-**📂 Mở thư mục** mở nơi chứa video kết quả (của video đang chọn, hoặc video vừa xong).
+**📂 Mở thư mục kết quả** mở nơi chứa video kết quả (của video đang chọn, hoặc video vừa xong). Mỗi
+thẻ video xong còn có **▶ Xem**, **📋 TikTok**, **📂** riêng (xem *Thẻ video*, §4).
+
+Cạnh mỗi video `<tên gốc>_vi.mp4` có file **`<tên gốc>_vi.txt`**: prompt viết sẵn cho ChatGPT
+(**tiêu đề + mô tả + đúng 5 hashtag** để đăng TikTok) kèm toàn bộ lời thoại tiếng Việt. Mở file,
+chép hết, dán vào ChatGPT — hoặc bấm **📋 TikTok** trên thẻ cho nhanh.
 
 ---
 
 ## 11. Các hộp thoại xuất hiện khi đang chạy
 
-### Dịch thủ công
+### Duyệt bản dịch
 
-Xem [§6.6](#66-dịch-thủ-công--từng-bước).
+Chỉ hiện khi bạn bỏ tích *Bỏ qua* ở **Duyệt bản dịch** — xem
+[§6.6](#66-duyệt-bản-dịch--nhờ-chatbot-sửa).
 
-### "Groq đang giới hạn số request"
+### "Groq rate limit"
 
 Groq miễn phí giới hạn số lần dịch mỗi phút. Khi cả hai model của Groq đều bị chặn, app hỏi:
 
@@ -448,12 +530,12 @@ Hộp thoại ghi rõ đã dịch được bao nhiêu câu, ví dụ *"Đã dị
    chạy tiếp các video khác):
    - dòng đỏ: lỗi là gì;
    - khung dưới: **báo cáo đầy đủ** (có thể bôi đen để chép);
-   - **Sao chép lỗi:** chép toàn bộ báo cáo — dán vào tin nhắn gửi người hỗ trợ;
-   - **Mở file lỗi:** mở file báo cáo đã lưu.
+   - **Copy lỗi:** chép toàn bộ báo cáo — dán vào tin nhắn gửi người hỗ trợ;
+   - **Mở báo cáo lỗi:** mở file báo cáo đã lưu.
 2. Đóng cửa sổ rồi muốn xem lại: **bấm đúp vào video bị lỗi** trong hàng đợi.
 3. Mỗi lỗi được lưu thành một file `.txt` trong thư mục **Báo cáo lỗi**
-   (*📁 Thư mục làm việc… → Báo cáo lỗi*). File gồm thông báo lỗi, chi tiết kỹ thuật, cấu hình
-   video đã chạy và nhật ký gần nhất — **không chứa khóa Groq**. App giữ 30 báo cáo mới nhất.
+   (*📁 Workspace… → Báo cáo lỗi*). File gồm thông báo lỗi, chi tiết kỹ thuật, cấu hình
+   video đã chạy và nhật ký gần nhất — **không chứa Groq API key**. App giữ lại mọi báo cáo (xóa tay trong thư mục khi cần).
 
 Sau khi xử lý nguyên nhân, bấm **↻ Chạy lại**.
 
@@ -461,11 +543,11 @@ Sau khi xử lý nguyên nhân, bấm **↻ Chạy lại**.
 
 ## 13. Dữ liệu được lưu ở đâu
 
-Cách nhanh nhất: **📁 Thư mục làm việc…** → **Mở**. Đường dẫn mặc định:
+Cách nhanh nhất: **⚙ Cài đặt → 📁 Workspace…** → **Mở**. Đường dẫn mặc định:
 
 | Dữ liệu | macOS | Windows |
 |---|---|---|
-| Video kết quả, file `_zh.txt` | Cạnh video gốc hoặc thư mục bạn chọn | như macOS |
+| Video kết quả `_vi.mp4` + prompt TikTok `_vi.txt` | Cạnh video gốc hoặc thư mục bạn chọn | như macOS |
 | File tạm | `~/Library/Application Support/dubber/jobs` | `C:\Users\<tên>\AppData\Local\dubber\dubber\jobs` |
 | Giọng đã clone | `~/Library/Application Support/dubber/voices/vieneu` | `…\AppData\Local\dubber\dubber\voices\vieneu` |
 | Log, báo cáo lỗi | `~/Library/Logs/dubber` | `…\AppData\Local\dubber\dubber\Logs` |
@@ -485,16 +567,16 @@ macOS: trong Finder bấm **Cmd + Shift + G**, dán đường dẫn để mở n
 - **Groq** cho bản dịch hay nhất; video dài hay dịch nhiều → có thể gặp giới hạn (§11).
 - Muốn giọng **tự nhiên**: VieNeu-TTS; muốn **nhanh**: Piper. Bấm **▶ Nghe thử** trước khi chọn.
 - Clone giọng: **6–8 giây sạch, một người nói** quan trọng hơn file dài.
-- Video có **phụ đề Trung sẵn** trong hình: chọn *Che sub gốc → Tự động* và đặt phụ đề Việt đè lên
-  vùng chữ Trung (tăng *Lề vùng mờ* nếu còn lộ chữ), hoặc dùng *Thủ công* để tự kéo vùng che.
+- Video có **phụ đề Trung sẵn** trong hình: chọn *Che phụ đề gốc → Tự động* và đặt phụ đề Việt đè lên
+  vùng chữ Trung (tăng *Lề vùng làm mờ* nếu còn lộ chữ), hoặc dùng *Thủ công* để tự kéo vùng che.
 - Giọng Việt bị lấn: giảm nhạc nền / tiếng Trung, đừng tăng giọng Việt quá 100% (dễ rè).
 
 ---
 
 ## 15. Câu hỏi thường gặp & xử lý sự cố
 
-**"Chưa có khóa Groq" / dòng Khóa Groq báo "Chưa có"**
-Đặt khóa: tab **Giọng & dịch → 🔑 Đặt khóa Groq…** (§1). Bấm **Kiểm tra**: nếu báo "Groq từ chối
+**"Chưa có Groq API key" / dòng Groq API key báo "Chưa có"**
+Đặt khóa: **⚙ Cài đặt → Groq API key → 🔑 Nhập API key…** (§1). Bấm **Kiểm tra**: nếu báo "Groq từ chối
 khóa này" thì khóa sai hoặc đã bị thu hồi — tạo khóa mới trên console.groq.com.
 
 **Hộp thoại báo "Không lưu được vào kho mật khẩu…"**
@@ -516,13 +598,10 @@ chỉ nhận diện trên âm thanh gốc.
 Đoạn cắt sai (bắt đầu sau kết thúc, hoặc ngoài độ dài video). Mở tab Giọng & dịch, kiểm tra ô
 *Chỉ xử lý một đoạn* (thanh kéo sẽ tự sửa khi bạn nhấn Enter), hoặc bỏ tích để chạy cả video.
 
-**Dịch thủ công báo "File có X dòng, cần đúng Y dòng"**
-File tiếng Việt phải có đúng số dòng như file `_zh.txt` (dòng trống không tính). Kiểm tra có
-gộp / tách nhầm câu không, có lưu đúng dạng văn bản thường (`.txt`) không.
-
 **Giọng Việt đọc nhanh / bị đè lên câu sau**
 Câu tiếng Việt dài hơn khoảng thời gian câu tiếng Trung. App tự tăng tốc tối đa 1,3× và đẩy câu
-sau tối đa 0,5 giây. Với dịch thủ công, viết câu ngắn gọn hơn sẽ đỡ hơn.
+sau tối đa 0,5 giây. Bỏ tích *Bỏ qua* ở **Duyệt bản dịch** rồi rút gọn các câu ⚠ dài (hoặc
+nhờ chatbot rút gọn) sẽ đỡ hơn.
 
 **Phụ đề Việt đè chữ Trung / lệch chỗ**
 Dùng *Chọn vị trí…* và *Chọn vùng…* trong tab Phụ đề (§7).
@@ -532,19 +611,19 @@ Kiểm tra âm lượng máy / tai nghe. Nếu báo "Không tạo được câu 
 VieNeu lần đầu có thể cần mạng để tải model.
 
 **Ổ đĩa sắp đầy**
-Bấm **Dọn ngay**, hoặc dùng *📁 Thư mục làm việc… → Đổi…* chuyển file tạm sang ổ khác. Model
+Bấm **Dọn cache**, hoặc dùng *📁 Workspace… → Đổi…* chuyển file tạm sang ổ khác. Model
 dịch offline NLLB (~5,5 GB) nằm trong `~/.cache/huggingface/hub` — xóa được nếu không dùng NLLB
 (lần sau chọn NLLB sẽ tải lại).
 
 **Tắt / mở lại app đúng cách**
 Tắt bằng **Cmd + Q** (macOS) hoặc nút đóng cửa sổ. Nên đợi cửa sổ đóng hẳn rồi mới mở lại, để
-không có hai cửa sổ Dubber chạy cùng lúc. Nếu đang có video chạy, nên **⏹ Dừng sau video này**
+không có hai cửa sổ Dubber Bee chạy cùng lúc. Nếu đang có video chạy, nên **⏹ Dừng sau video này**
 hoặc **✖ Hủy video này** trước khi tắt.
 
 **App không tắt khi bị đóng từ bên ngoài (Terminal `kill`, công cụ khác)**
 App không phản hồi lệnh tắt gửi từ bên ngoài khi đang mở cửa sổ. Hãy tắt bằng Cmd + Q. Nếu app
-bị treo hẳn: macOS **Cmd + Option + Esc → chọn Python / Dubber → Buộc thoát**; Windows
+bị treo hẳn: macOS **Cmd + Option + Esc → chọn Python / Dubber Bee → Buộc thoát**; Windows
 **Ctrl + Shift + Esc → Task Manager → End task**. Video đang chạy dở sẽ phải chạy lại.
 
 **Lỗi khác**
-Mở cửa sổ lỗi (bấm đúp vào video ✗), bấm **Sao chép lỗi** và gửi cho người hỗ trợ kỹ thuật.
+Mở cửa sổ lỗi (bấm đúp vào video ✗), bấm **Copy lỗi** và gửi cho người hỗ trợ kỹ thuật.

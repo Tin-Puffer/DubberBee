@@ -61,3 +61,18 @@ def _memory_keyring():
     keyring.set_keyring(mem)
     yield mem
     keyring.set_keyring(previous)
+
+
+@pytest.fixture(autouse=True)
+def _collect_qt_garbage():
+    """Free the windows / dialogs a test left behind right after it, while no worker
+    thread runs: a cyclic-GC pass that lands mid-test (in the next test, during a
+    background task) can crash PySide6 (Shiboken cppPointer on a deleted object)."""
+    yield
+    import gc
+    import sys
+    if "PySide6.QtWidgets" in sys.modules:
+        from PySide6.QtWidgets import QApplication
+        if QApplication.instance() is not None:
+            QApplication.processEvents()
+        gc.collect()

@@ -1,6 +1,6 @@
-# Dubber — Tài liệu kỹ thuật
+# Dubber Bee — Tài liệu kỹ thuật
 
-Dubber là ứng dụng desktop (macOS / Windows) lồng tiếng tự động video **tiếng Trung → tiếng Việt**,
+Dubber Bee (package Python `dubber`) là ứng dụng desktop (macOS / Windows) lồng tiếng tự động video **tiếng Trung → tiếng Việt**,
 chạy chủ yếu **offline trên máy** (trừ dịch Groq). Tài liệu này mô tả kiến trúc, công nghệ,
 dữ liệu, cách build/test và những quyết định kỹ thuật quan trọng.
 
@@ -12,7 +12,7 @@ Hướng dẫn cho người dùng cuối: xem [HUONG_DAN_SU_DUNG.md](HUONG_DAN_S
 
 ```
 video ─► (cắt đoạn) ─► tách nhạc MDX-Net ─► VAD (FSMN / Silero) ─► ASR SenseVoice
-      ─► tách câu theo mốc từng chữ ─► dịch (Groq / MarianMT / NLLB / thủ công)
+      ─► tách câu theo mốc từng chữ ─► dịch (Groq / MarianMT / NLLB) ─► (duyệt bản dịch)
       ─► TTS (Piper / VieNeu-TTS) ─► căn thời gian (TimingFitter) ─► dub.wav
       ─► phụ đề ASS + làm mờ ─► trộn âm (giọng Việt + nhạc nền + tiếng Trung) ─► render FFmpeg
 ```
@@ -54,16 +54,26 @@ quả của bước trước nếu còn hợp lệ (xem §5 Cache).
 dubber/
 ├── __main__.py                 CLI + chọn GUI (python -m dubber)
 ├── app/
-│   ├── gui.py                  Cửa sổ chính, OptionsPanel, ExportPanel, OutputPanel, PipelineWorker
+│   ├── gui.py                  Cửa sổ chính, OptionsPanel, ExportPanel, OutputPanel, PipelineWorker,
+│   │                           hàng đợi (thẻ, chọn nhiều, kéo đổi thứ tự, menu chuột phải), lưu /
+│   │                           khôi phục cửa sổ + tab + hàng đợi, chặn lăn chuột đổi giá trị
+│   ├── queue_card.py           Thẻ video: trạng thái + nút theo trạng thái
+│   ├── progress.py             RunProgress: % tổng (trọng số từng bước), thời gian còn lại
+│   ├── notify.py               Thông báo hệ thống + Dock khi xong / lỗi / cần người dùng
+│   ├── preview.py              Khung hình + phụ đề mẫu (Qt, gần đúng) trong "Thông tin video gốc"
+│   ├── settings_dialog.py      ⚙ Cài đặt: Groq API key (+ Kiểm tra), thông báo, prompt AI, cache
+│   ├── prompt_dialog.py        Soạn prompt AI: lưu / khôi phục mặc định
+│   ├── tasks.py                TaskRunner + BusyBar: việc chậm chạy nền
 │   ├── trim_editor.py          Thanh cắt 2 đầu + ô nhập giây (tự sửa giá trị sai)
 │   ├── layout_dialog.py        Xem trước phụ đề & chọn vùng làm mờ (render bằng FFmpeg/libass)
 │   ├── voice_dialog.py         Hộp thoại clone giọng VieNeu
-│   ├── manual_dialog.py        Hộp thoại dịch thủ công, hộp thoại Groq bị giới hạn
+│   ├── wait_dialogs.py         Hộp thoại Groq bị giới hạn + mở file / thư mục
+│   ├── review_dialog.py        Duyệt / sửa bản dịch trước TTS, sao chép / dán chatbot
 │   ├── error_dialog.py         Popup lỗi (sao chép / mở file báo cáo)
-│   ├── api_key_dialog.py       Đặt / kiểm tra / xóa khóa Groq
-│   └── workspace_dialog.py     Thư mục làm việc: mở / đổi chỗ lưu file tạm, log
+│   ├── api_key_dialog.py       Nhập / kiểm tra / xóa Groq API key
+│   └── workspace_dialog.py     Workspace: mở / đổi chỗ lưu cache, log
 └── core/
-    ├── pipeline.py             Điều phối M1–M5, cache theo chữ ký, dịch thủ công
+    ├── pipeline.py             Điều phối M1–M5, cache theo chữ ký, hook duyệt bản dịch
     ├── asr/
     │   ├── sensevoice_sherpa.py   SenseVoice + VAD (FSMN/Silero), điểm hủy theo từng đoạn
     │   ├── fsmn_vad.py            FSMN-VAD (fbank kaldi-native-fbank → LFR → CMVN → ONNX)
@@ -73,7 +83,9 @@ dubber/
     ├── translate/
     │   ├── groq_translator.py     Groq + xử lý rate limit (hỏi người dùng)
     │   ├── local_translator.py    MarianMT, NLLB 1.3B, AutoTranslator (Groq → MarianMT)
-    │   ├── manual.py              Xuất / đọc file .txt dịch thủ công
+    │   ├── review.py              Câu cần chú ý, định dạng sao chép / dán chatbot
+    │   ├── tiktok.py              Prompt TikTok + lời thoại → <video>_vi.txt
+    │   ├── prompts.py             Prompt AI người dùng sửa được (settings.json, mặc định / reset)
     │   └── base.py                Translator, TranslateSegment, make_segments
     ├── tts/
     │   ├── factory.py             make_tts_engine("piper" | "vieneu")
@@ -83,13 +95,14 @@ dubber/
     │   └── demo.py                Câu nghe thử (cache)
     ├── audio/                     extract, separate (MDX-Net), fit (TimingFitter), mixer
     ├── video/                     render (FFmpeg), subtitles (ASS), fonts, info
+    assets/                        fonts/ (phụ đề), logo/ (logo.svg + PNG + icon.icns / icon.ico)
     └── utils/
         ├── job_cache.py           Chữ ký *.sig.json
-        ├── paths.py               Thư mục job / log, giới hạn & dọn dẹp
+        ├── paths.py               Thư mục job / log, dọn cache theo yêu cầu
         ├── cancel.py              CancelToken, JobCancelled
         ├── error_report.py        Ghi báo cáo lỗi
         ├── settings.py            settings.json
-        ├── api_keys.py            Khóa Groq trong kho mật khẩu hệ điều hành (keyring)
+        ├── api_keys.py            Groq API key trong keyring + ping_groq (1 request 1 token)
         └── ffmpeg_locator.py      Tìm ffmpeg (bundle → Homebrew ffmpeg-full → PATH)
 scripts/   setup_mac.sh, setup_dev.ps1, build_exe_mac.sh, build_exe.ps1,
            eval_asr.py (đánh giá tách câu), fetch_uvr_model.py
@@ -128,7 +141,6 @@ tests/     pytest
 | Groq | `GroqTranslator` | lô 30 câu, 3 câu ngữ cảnh, `max_chars` = thời lượng × 14 ký tự/s |
 | MarianMT | `LocalTranslator` | ~300 MB |
 | NLLB 1.3B | `NLLBTranslator` | ~5,5 GB, ghim commit safetensors (xem §8) |
-| Thủ công | `Pipeline._manual_translation` | xuất `<video>_zh.txt`, chờ người dùng tải `.txt` tiếng Việt |
 
 **Groq bị giới hạn (HTTP 429):** model chính bị chặn → đổi sang model dự phòng; cả hai bị chặn
 → hỏi người dùng (GUI): *tiếp tục Groq* (đợi theo header `retry-after` /
@@ -137,9 +149,11 @@ tests/     pytest
 chặn thì hỏi lại. SDK Groq tắt tự retry (`max_retries=0`). Không có GUI (CLI) → tự đợi và
 thử lại tối đa 6 lần.
 
-**Dịch thủ công:** file xuất có mỗi dòng một câu tiếng Trung. File tải lên: `.txt` mỗi dòng
-một câu đúng thứ tự (cho phép tiền tố "1." / "1)" / "[1]"; UTF-8 / UTF-16 / cp1258), vẫn hiểu
-`.srt` cùng số thứ tự. Sai số dòng → báo rõ và hỏi lại.
+**Duyệt bản dịch** (`Pipeline.review_translation`, chỉ khi bỏ tích *Bỏ qua*): sau M2 worker hỏi
+GUI (`ask("review")`), `ReviewDialog` trả về danh sách câu Việt; câu sửa được chuẩn hóa
+(`normalize_text`) và ghi đè `translate.json` + `translations/<bộ dịch>.json`. Định dạng chatbot:
+gửi `n. [thời lượng] 中文 → tiếng Việt  ⚠ …`, nhận `[n] câu` (cũng hiểu `n.` / `n)`; bỏ dòng
+không số, khối ```), `review.parse_chatbot_reply`.
 
 ### 4.3 Đọc tiếng Việt (TTS)
 
@@ -186,7 +200,7 @@ một câu đúng thứ tự (cho phép tiền tố "1." / "1)" / "[1]"; UTF-8 /
 - **Chữ ký** (`*.sig.json`, `utils/job_cache.py`):
   - `asr.json`: hash audio đầu vào + VAD + chế độ tách câu + có lọc nhạc + tên model.
   - `translations/<bộ dịch>.json`: hash nội dung `asr.json` + bộ dịch → mỗi bộ dịch giữ một
-    bản; đổi qua lại không phải dịch lại. Dịch thủ công luôn hỏi trước khi dùng lại.
+    bản; đổi qua lại không phải dịch lại.
 - TTS: mỗi câu một file theo khóa ở §4.3. Tách nhạc: `separated/` (đánh dấu `.ffmpeg_fallback`
   nếu là bản dự phòng).
 
@@ -202,18 +216,24 @@ một câu đúng thứ tự (cho phép tiền tố "1." / "1)" / "[1]"; UTF-8 /
 | Câu nghe thử, model UVR | `~/Library/Caches/dubber/` | `%LOCALAPPDATA%\dubber\dubber\Cache` |
 | Log, báo cáo lỗi | `~/Library/Logs/dubber/` (`dubber.log`, `errors/`) | `%LOCALAPPDATA%\dubber\dubber\Logs` |
 | Cấu hình | `~/Library/Preferences/dubber/settings.json` | `%LOCALAPPDATA%\dubber\dubber\settings.json` |
-| Khóa Groq | macOS Keychain (`Dubber` / `GROQ_API_KEY`) | Windows Credential Manager |
+| Khung hình xem trước | `~/Library/Caches/dubber/frames/` | `…\dubber\dubber\Cache\frames` |
+| Groq API key | macOS Keychain (`Dubber` / `GROQ_API_KEY`) | Windows Credential Manager |
 | Model HuggingFace (MarianMT, NLLB) | `~/.cache/huggingface/hub` | `%USERPROFILE%\.cache\huggingface\hub` |
 
-- Thư mục **job** và **log** đổi được trong *Thư mục làm việc* (`settings.json`:
+- Thư mục **job** và **log** đổi được trong *⚙ Cài đặt → Workspace* (`settings.json`:
   `workspace_dir`, `logs_dir`). Thư mục người dùng chọn chỉ nhận thư mục con của Dubber
   (`Dubber workspace/jobs`, `Dubber logs`); dọn dẹp chỉ xóa thư mục job thật
   (`_is_job_dir`: tên 12 ký tự hex hoặc có `input.json`).
-- **Tự dọn:** sau mỗi lần chạy GUI xóa file tạo lại được (`output.mp4`, `dubbed.mp4`,
-  `audio_stereo.wav`, `background_mixed.wav`, `dub.wav`, `tts_speed/`) — job 2 phút ~198 → 53 MB.
-  Khi mở app / sau mỗi lần chạy: tối đa **10 job, 7 ngày, 5 GB** (xóa cũ nhất trước, luôn giữ
-  job mới nhất). Báo cáo lỗi giữ 30 file. `dubber.log` xoay vòng 5 MB × 3.
-- **Hủy video** xóa toàn bộ thư mục job của video đó và file `_zh.txt` đã xuất.
+- **Không tự dọn:** app không tự xóa thư mục job hay file nào trong đó (kể cả `output.mp4`),
+  cũng không xóa báo cáo lỗi cũ; chỉ nút **Dọn cache** (`clear_jobs`) xóa job.
+  `dubber.log` xoay vòng 5 MB × 3.
+- **Hủy video** xóa toàn bộ thư mục job của video đó.
+- Các khóa khác trong `settings.json`: `output_dir`, `tts_engine` / `voice` (lần chọn cuối),
+  `notify`, `review_prompt` / `tiktok_prompt` (chỉ lưu khi khác mặc định; `null` = mặc định),
+  `window_geometry`, `options_tab`, `queue` (danh sách video: đường dẫn, cấu hình, trạng thái,
+  file kết quả — video đang chạy lưu thành "chờ chạy", file nguồn không còn thì bỏ qua).
+  Tên thư mục dữ liệu (`dubber`, `Dubber workspace`, `Dubber logs`) và service keyring `Dubber`
+  **giữ nguyên** sau khi đổi tên app thành Dubber Bee để không mất dữ liệu cũ.
 
 ---
 
@@ -227,12 +247,23 @@ một câu đúng thứ tự (cho phép tiền tố "1." / "1)" / "[1]"; UTF-8 /
   sau khi bước đó xong.
 - **Hỏi người dùng** (`ask` / `answer`): worker phát `ask(kind, payload)` rồi chờ
   `threading.Event`; GUI hiện hộp thoại và gọi `answer()`. Hủy cũng giải phóng chờ.
-  Dùng cho dịch thủ công và Groq rate limit.
+  Dùng cho duyệt bản dịch và Groq rate limit.
 - **Báo lỗi:** `utils/error_report.py` ghi `<logs>/errors/<thời gian>_<video>.txt` (thông báo,
   traceback, cấu hình job, môi trường, 150 dòng log cuối; **không** ghi biến môi trường) và GUI
   hiện popup không chặn (`error_dialog.py`).
 - Callback từ thread nền vào GUI luôn nối vào **method của QObject** (để Qt chuyển về thread
   GUI) — không nối vào lambda/hàm thường.
+- **Tiến trình:** `RunProgress` tính % tổng theo trọng số bước (tách nhạc 25 %, ASR 10 %, dịch
+  10 %, TTS 35 %, ghép 5 %, render 15 %); bước trước bị bỏ qua / dùng cache tính là xong khi bước
+  sau bắt đầu. Thời gian còn lại = đã chạy / % − đã chạy (hiện khi ≥ 3 % và ≥ 10 s). Thời gian
+  chờ người dùng (`ask`) không tính. `QTimer` 1 s cập nhật thẻ + tiêu đề khung tiến trình.
+- **Hàng đợi:** `QListWidget` (ExtendedSelection, InternalMove) + `QueueCard` qua
+  `setItemWidget`; item giữ `id(job)` ở `Qt.UserRole` để sắp lại `_jobs` khi kéo thả
+  (`rowsMoved`), card bị mất sau khi kéo được tạo lại.
+- **Thông báo** (`notify.py`): chỉ khi cửa sổ không active; macOS `osascript display
+  notification` (tham số qua `argv`, không ghép chuỗi script) + `QApplication.alert`.
+- **Lăn chuột:** event filter toàn app chặn Wheel trên `QComboBox` / `QAbstractSpinBox` /
+  `QAbstractSlider` (trừ thanh cuộn) và chuyển lên widget cha để trang vẫn cuộn.
 
 ---
 
@@ -292,6 +323,11 @@ bash scripts/build_exe_mac.sh            # dist/Dubber.app + dist/Dubber-macos.z
 **Extras** (`pyproject.toml`): `dev` (pytest), `offline` (torch, transformers; kèm
 `separation`), `separation` (audio-separator), `vieneu` (VieNeu-TTS).
 
+**Tên & icon:** hiển thị "Dubber Bee" (`CFBundleName` / `CFBundleDisplayName`, tiêu đề cửa sổ,
+thông báo); file build vẫn là `Dubber.app` / `Dubber.exe`. Icon lấy từ `dubber/assets/logo/`
+(`icon.icns` / `icon.ico`); các `logo_*.png` được đóng gói để vẽ logo ở header và icon Dock.
+Nguồn logo là `logo.svg` — sửa xong xuất lại PNG / icns / ico.
+
 **Build** đóng gói: FFmpeg (macOS: `ffmpeg-full` + dylib qua `dylibbundler`), SenseVoice,
 FSMN-VAD, Silero, giọng Piper, model VieNeu, model UVR + 3 file danh sách model (để tách nhạc
 chạy offline), torch/transformers, audio-separator (+ torchvision vì `onnx2torch` cần, PIL,
@@ -311,7 +347,7 @@ offline (`HF_HUB_OFFLINE=1`) trên macOS. PySide6 chỉ gom QtCore/Gui/Widgets/M
   từ `os.environ`. UI chỉ hiện dạng che (`gsk_…abcd`); thông báo lỗi kiểm tra khóa không lặp lại
   khóa. Không ghi khóa vào code, log, báo cáo lỗi hay file kết quả. Test dùng kho giả trong bộ
   nhớ (`tests/conftest.py`), không đụng Keychain thật.
-- Thư mục người dùng chọn: chỉ ghi vào thư mục con của Dubber; chỉ xóa thư mục job thật.
+- Thư mục người dùng chọn: chỉ ghi vào thư mục con của Dubber Bee; chỉ xóa thư mục job thật.
 - Model và giọng clone không bao giờ bị tự dọn.
 
 ---
@@ -343,7 +379,7 @@ phân phối thương mại.
 - NLLB 1.3B dịch kém Groq rõ rệt, có thể bịa nội dung ở câu ngắn.
 - VieNeu không chỉnh được tốc độ → câu dài chỉ được tăng tốc bằng `atempo` ≤ 1,3×.
 - Clone giọng dùng tối đa 8 s mẫu (giới hạn SDK); không fine-tune.
-- Hộp thoại *Thư mục làm việc*: trong bản build, dòng "Model đã tải" trỏ thư mục user-data
+- Hộp thoại *Workspace*: trong bản build, dòng "Model" trỏ thư mục user-data
   (model thật nằm trong app).
 - Bản Windows build trên GitHub Actions (test + khởi động thử), chưa chạy thử pipeline đầy đủ
   trên máy Windows thật.
