@@ -24,6 +24,15 @@ from dubber.core.utils.ffmpeg_locator import find_ffmpeg, find_ffprobe, no_windo
 from dubber.core.video.fonts import (
     DEFAULT_FONT, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, SUBTITLE_FONTS, fonts_dir,
 )
+from dubber.app.theme import FS_BODY, FS_CAPTION, FS_HINT, SP_L, SP_M
+
+
+def _overlay_font() -> QFont:
+    """Small labels painted on the frame (selection size, handles) in the interface font."""
+    from dubber.core.video.fonts import UI_FONT
+    f = QFont(UI_FONT)
+    f.setPixelSize(FS_CAPTION)
+    return f
 
 # One subtitle event: no . , ; and ≤ subtitles.MAX_CUE_CHARS, otherwise build_ass splits it
 # into consecutive cues and the preview frame only shows the first one. About as long as
@@ -168,7 +177,7 @@ class FrameCanvas(QWidget):
             p.setPen(QPen(_BLUR_COLOR, 2, Qt.DashLine))
             p.drawRect(wr)
             p.setPen(_BLUR_COLOR)
-            p.setFont(QFont("Arial", 11))
+            p.setFont(_overlay_font())
             p.drawText(wr.topLeft() + QPointF(4, -6), "Vùng làm mờ")
 
         if self.sub_pos:
@@ -180,7 +189,7 @@ class FrameCanvas(QWidget):
 
         if self.dragging:
             p.setPen(QColor("#ffffffcc"))
-            p.setFont(QFont("Arial", 11))
+            p.setFont(_overlay_font())
             p.drawText(target.adjusted(8, 8, -8, -8), Qt.AlignTop | Qt.AlignRight,
                        "Thả chuột để xem chính xác")
         p.end()
@@ -204,12 +213,14 @@ class LayoutDialog(QDialog):
         self._rendering = False
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         hint = QLabel(
             "Ảnh xem trước được vẽ giống hệt video xuất ra. Kéo chuột để chọn vùng làm mờ "
             "(che phụ đề Trung) · Bấm để đặt tâm phụ đề tiếng Việt · Kéo thanh thời gian để tìm "
             "khung hình có phụ đề gốc.", self)
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 12px;")
+        hint.setStyleSheet(f"color: #888; font-size: {FS_HINT}px;")
         lay.addWidget(hint)
 
         self.canvas = FrameCanvas(self._vw, self._vh, self)
@@ -240,7 +251,7 @@ class LayoutDialog(QDialog):
         self._combo_font = QComboBox(self)
         for family, label in SUBTITLE_FONTS:
             self._combo_font.addItem(label, userData=family)
-            f = QFont(family); f.setBold(True); f.setPixelSize(13)
+            f = QFont(family); f.setBold(True); f.setPixelSize(FS_BODY)
             self._combo_font.setItemData(self._combo_font.count() - 1, f, Qt.FontRole)
         idx = self._combo_font.findText(next((l for fam, l in SUBTITLE_FONTS if fam == font_family), font_family))
         self._combo_font.setCurrentIndex(max(0, idx))
@@ -254,7 +265,7 @@ class LayoutDialog(QDialog):
         self._spin_size.valueChanged.connect(self._schedule_render)
         row_f.addWidget(self._spin_size)
         self._lbl_px = QLabel("", self)
-        self._lbl_px.setStyleSheet("color: #888; font-size: 11px;")
+        self._lbl_px.setStyleSheet(f"color: #888; font-size: {FS_CAPTION}px;")
         row_f.addWidget(self._lbl_px)
         lay.addLayout(row_f)
 

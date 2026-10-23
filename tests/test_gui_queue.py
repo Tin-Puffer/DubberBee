@@ -530,16 +530,18 @@ def test_clone_dialog_flow(tmp_path, voice_lib, monkeypatch):
 # ── Option hints (one line under each choice, also the tooltip) ───────────────
 
 def _hint_under(widget):
-    """The hint QLabel added right below *widget*'s row in its form."""
-    from PySide6.QtWidgets import QFormLayout
-    form = widget.parentWidget().layout()
-    assert isinstance(form, QFormLayout)
-    row = next(r for r in range(form.rowCount())
-               if (it := form.itemAt(r, QFormLayout.FieldRole)) and
-               (it.widget() is widget or (it.widget() and widget in it.widget().findChildren(type(widget)))))
-    from PySide6.QtWidgets import QLabel
-    for r in range(row + 1, form.rowCount()):   # first label below (trim has its spinbox row first)
-        w = form.itemAt(r, QFormLayout.FieldRole).widget()
+    """The hint QLabel right below *widget*, in the same form row (gui._finish_form puts a
+    row's notes in one column under its field)."""
+    from PySide6.QtWidgets import QFormLayout, QLabel, QVBoxLayout
+    field = widget
+    while not isinstance(field.parentWidget().layout(), QFormLayout):
+        field = field.parentWidget()
+    col = field.layout()
+    assert isinstance(col, QVBoxLayout), "no note column under this option"
+    items = [col.itemAt(i).widget() for i in range(col.count())]
+    start = next(i for i, w in enumerate(items)
+                 if w is widget or widget in w.findChildren(type(widget)))
+    for w in items[start + 1:]:   # first label below (trim has its editor first)
         if isinstance(w, QLabel):
             return w
     raise AssertionError("no hint below widget")

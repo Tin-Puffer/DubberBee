@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QValidator
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QDoubleSpinBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
+from dubber.app.theme import FS_CAPTION, SP_S, SP_XS
 
 MIN_GAP = 0.5          # seconds — shortest piece that can be processed
 UNKNOWN_MAX = 9999.0   # video length not known yet (no video selected)
@@ -150,7 +151,7 @@ class TrimEditor(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(SP_XS)
 
         self.slider = RangeSlider(self)
         self.slider.rangeChanged.connect(self._on_slider)
@@ -158,7 +159,7 @@ class TrimEditor(QWidget):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
+        row.setSpacing(SP_S)
         self.spin_start = SecondsSpinBox(self)
         self.spin_end = SecondsSpinBox(self)
         for sp in (self.spin_start, self.spin_end):
@@ -174,7 +175,7 @@ class TrimEditor(QWidget):
         lbl_to = QLabel("đến", self)
         lbl_to.setStyleSheet("color: #888;")
         self.lbl_info = QLabel("", self)
-        self.lbl_info.setStyleSheet("color: #555; font-size: 11px;")
+        self.lbl_info.setStyleSheet(f"color: #555; font-size: {FS_CAPTION}px;")
         row.addWidget(self.spin_start)
         row.addWidget(lbl_to)
         row.addWidget(self.spin_end)

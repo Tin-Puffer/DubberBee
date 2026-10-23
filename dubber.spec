@@ -80,6 +80,8 @@ for _name in (['ffmpeg', 'ffprobe'] if IS_MAC else ['ffmpeg.exe', 'ffprobe.exe']
 # Added as DATA so PyInstaller doesn't merge its dylibs into Frameworks/.
 # Subtitle fonts (dubber/assets/fonts → same path in the bundle; see fonts.fonts_dir())
 font_datas = [(str(_f), 'dubber/assets/fonts') for _f in (project_root / 'dubber' / 'assets' / 'fonts').glob('*.ttf')]
+# Interface font weights (FZ Poppins Regular/Medium/SemiBold; see fonts.ui_fonts_dir())
+font_datas += [(str(_f), 'dubber/assets/ui-fonts') for _f in (project_root / 'dubber' / 'assets' / 'ui-fonts').glob('*.ttf')]
 # App logo (header + Dock / taskbar icon at runtime; see gui.app_logo)
 logo_dir = project_root / 'dubber' / 'assets' / 'logo'
 # logo_1024.png (macOS Dock icon) stays out of the Windows bundle: it uses icon.ico, and the

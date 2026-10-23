@@ -13,6 +13,7 @@ SUBTITLE_FONTS: list[tuple[str, str]] = [
     ("Nunito", "Nunito"),
     ("Lexend", "Lexend"),
     ("Noto Sans", "Noto Sans"),
+    ("Fz Poppins", "FZ Poppins"),
 ]
 DEFAULT_FONT = "Arial"
 DEFAULT_FONT_SIZE = 48   # px on a 1080p frame — scaled to the video height
@@ -26,6 +27,7 @@ _FONT_FILES = {
     "Nunito": "Nunito-Bold.ttf",
     "Lexend": "Lexend-Bold.ttf",
     "Noto Sans": "NotoSans-Bold.ttf",
+    "Fz Poppins": "FZPoppins-Bold.ttf",
 }
 _SYSTEM_ARIAL_BOLD = [
     Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "arialbd.ttf",
@@ -39,6 +41,17 @@ def fonts_dir() -> Path:
     """Folder of bundled .ttf files; works from source and inside the PyInstaller bundle
     (the spec ships it at dubber/assets/fonts next to the package)."""
     return Path(__file__).resolve().parents[2] / "assets" / "fonts"
+
+
+# Font of the app's own interface (Poppins with Vietnamese glyphs). Its Bold sits in
+# fonts_dir() with the subtitle fonts; the lighter weights live in ui_fonts_dir() so
+# libass (which loads every file of fonts_dir) only ever sees the Bold.
+UI_FONT = "Fz Poppins"
+
+
+def ui_fonts_dir() -> Path:
+    """Folder of the interface-only weights (Regular / Medium / SemiBold)."""
+    return Path(__file__).resolve().parents[2] / "assets" / "ui-fonts"
 
 
 def font_file(family: str) -> "Path | None":

@@ -8,6 +8,7 @@ from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
+from dubber.app.theme import FS_BODY, FS_HINT, SP_L, SP_M
 
 _RED = "#f44336"
 _DIM = "#888"
@@ -25,11 +26,13 @@ class ErrorDialog(QDialog):
         self._path = Path(report_path) if report_path else None
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         head = QLabel(f"Không xử lý được <b>{video}</b>:", self)
         lay.addWidget(head)
         msg = QLabel(message, self)
         msg.setWordWrap(True)
-        msg.setStyleSheet(f"color: {_RED}; font-size: 13px;")
+        msg.setStyleSheet(f"color: {_RED}; font-size: {FS_BODY}px;")
         msg.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(msg)
 
@@ -42,7 +45,7 @@ class ErrorDialog(QDialog):
         if self._path:
             where = QLabel(f"Đã lưu báo cáo lỗi: {self._path}", self)
             where.setWordWrap(True)
-            where.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+            where.setStyleSheet(f"color: {_DIM}; font-size: {FS_HINT}px;")
             where.setTextInteractionFlags(Qt.TextSelectableByMouse)
             lay.addWidget(where)
 

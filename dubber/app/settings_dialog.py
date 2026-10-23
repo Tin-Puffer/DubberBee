@@ -12,11 +12,12 @@ from PySide6.QtWidgets import (
 
 from dubber.app import gui as g
 from dubber.app.tasks import TaskRunner
+from dubber.app.theme import CONTROL_H, FS_BODY, FS_HINT, GROUP_MARGINS, SP_L, SP_M, SP_S, SP_XS
 
 
 def _btn(text: str, parent) -> QPushButton:
     b = QPushButton(text, parent)
-    b.setFixedHeight(28)
+    b.setFixedHeight(CONTROL_H)
     b.setStyleSheet(g._SMALL_BTN_STYLE)
     return b
 
@@ -29,7 +30,7 @@ class GroqKeyRow(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        lay.setSpacing(SP_S)
         self._lbl_groq = QLabel("", self)
         self._lamp_groq = QLabel("●", self)
         self._lamp_groq.setFixedWidth(16)
@@ -58,7 +59,7 @@ class GroqKeyRow(QWidget):
         else:
             text, color = "Chưa có key — chế độ Groq / Tự động sẽ dịch bằng MarianMT", g._AMBER
         self._lbl_groq.setText(text)
-        self._lbl_groq.setStyleSheet(f"color: {color}; font-size: 12px;")
+        self._lbl_groq.setStyleSheet(f"color: {color}; font-size: {FS_BODY}px;")
 
     def _edit_groq_key(self):
         from dubber.app.api_key_dialog import GroqKeyDialog
@@ -96,7 +97,7 @@ class GroqKeyRow(QWidget):
         self._lbl_groq.setToolTip(msg)
         if not ok:
             self._lbl_groq.setText(f"✗ {msg}")
-            self._lbl_groq.setStyleSheet(f"color: {g._RED}; font-size: 12px;")
+            self._lbl_groq.setStyleSheet(f"color: {g._RED}; font-size: {FS_BODY}px;")
         else:
             self._refresh_groq_key()
 
@@ -108,9 +109,9 @@ class StorageRow(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        lay.setSpacing(SP_S)
         self._lbl_storage = QLabel("", self)
-        self._lbl_storage.setStyleSheet(f"color: {g._TXT_MID}; font-size: 12px;")
+        self._lbl_storage.setStyleSheet(f"color: {g._TXT_MID}; font-size: {FS_BODY}px;")
         self._lbl_storage.setToolTip(
             "Cache giúp chạy lại cùng video nhanh hơn (không phải nhận dạng / dịch lại).\n"
             "App không tự xóa — bấm “Dọn cache” khi cần giải phóng ổ đĩa.")
@@ -172,9 +173,9 @@ class PromptRow(QWidget):
         self._kind = kind
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(8)
+        lay.setSpacing(SP_S)
         self._name = QLabel(TITLES[kind], self)
-        self._name.setStyleSheet(f"color: {g._TXT_MAIN}; font-size: 12px;")
+        self._name.setStyleSheet(f"color: {g._TXT_MAIN}; font-size: {FS_BODY}px;")
         self._state = QLabel("", self)
         self.btn_edit = _btn("✎ Sửa…", self)
         self.btn_edit.clicked.connect(self._edit)
@@ -191,7 +192,7 @@ class PromptRow(QWidget):
         from dubber.core.translate.prompts import is_custom
         custom = is_custom(self._kind)
         self._state.setText("đã tùy chỉnh" if custom else "mặc định")
-        self._state.setStyleSheet(f"color: {g._AMBER if custom else g._TXT_MID}; font-size: 11px;")
+        self._state.setStyleSheet(f"color: {g._AMBER if custom else g._TXT_MID}; font-size: {FS_HINT}px;")
         self.btn_reset.setEnabled(custom)
 
     def _edit(self) -> None:
@@ -218,17 +219,20 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(620)
         self.setStyleSheet(g._BASE_STYLE)
         lay = QVBoxLayout(self)
-        lay.setSpacing(12)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
 
         def section(title: str, *widgets, note: str = "") -> None:
             box = QGroupBox(title, self)
             v = QVBoxLayout(box)
-            v.setContentsMargins(12, 16, 12, 10)
-            for w in widgets:
+            v.setContentsMargins(*GROUP_MARGINS)
+            v.setSpacing(SP_XS)              # a note sits SP_XS under what it explains
+            for i, w in enumerate(widgets):
+                if i:
+                    v.addSpacing(SP_S - SP_XS)   # rows of the box: SP_S apart
                 v.addWidget(w)
             if note:
-                n = g._hint_label(box, note)
-                v.addWidget(n)
+                v.addWidget(g._hint_label(box, note))
             lay.addWidget(box)
 
         self.groq = GroqKeyRow(self)

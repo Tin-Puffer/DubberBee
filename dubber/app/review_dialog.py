@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from dubber.app.tasks import BusyBar, TaskRunner
 from dubber.core.translate.review import chatbot_text, parse_chatbot_reply, row_flags
+from dubber.app.theme import FS_HINT, SP_L, SP_M
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,8 @@ class PasteReplyDialog(QDialog):
         self._parsed: dict = {}
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         lay.addWidget(QLabel('Dán câu trả lời của AI (mỗi dòng "[số] câu tiếng Việt"). '
                              "Câu không có trong câu trả lời được giữ nguyên.", self))
         self._edit = QPlainTextEdit(self)
@@ -164,6 +167,8 @@ class ReviewDialog(QDialog):
         self._runner = TaskRunner(self)
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         head = QLabel(
             f"<b>{len(rows)} câu</b>. Bấm đúp ô <b>Tiếng Việt</b> để sửa, hoặc dùng "
             "<b>Copy cho AI</b> → <b>Dán kết quả AI</b>. <b>Tiếp tục</b> để tạo giọng Việt và "
@@ -232,7 +237,7 @@ class ReviewDialog(QDialog):
         self._busy = BusyBar(self)
         lay.addWidget(self._busy)
         self._status = QLabel("", self)
-        self._status.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+        self._status.setStyleSheet(f"color: {_DIM}; font-size: {FS_HINT}px;")
         lay.addWidget(self._status)
 
         btns = QHBoxLayout()

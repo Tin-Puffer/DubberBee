@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
+from dubber.app.theme import FS_BODY, FS_CAPTION, SP_M, SP_S, SP_XS
 
 _TXT_MAIN = "#ddd"
 _TXT_MID = "#999"
@@ -102,29 +103,29 @@ class QueueCard(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, False)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 5, 8, 5)
-        lay.setSpacing(2)
+        lay.setContentsMargins(SP_M, SP_S, SP_M, SP_S)
+        lay.setSpacing(SP_XS)
 
-        top = QHBoxLayout(); top.setSpacing(8)
+        top = QHBoxLayout(); top.setSpacing(SP_S)
         self._icon = QLabel(self)
         self._icon.setFixedWidth(16)
         self._name = QLabel(self)
-        self._name.setStyleSheet(f"color: {_TXT_MAIN}; font-size: 12px; font-weight: 600;")
+        self._name.setStyleSheet(f"color: {_TXT_MAIN}; font-size: {FS_BODY}px; font-weight: 600;")
         self._name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # elided to fit
         self._facts = QLabel(self)
-        self._facts.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
+        self._facts.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_CAPTION}px;")
         top.addWidget(self._icon)
         top.addWidget(self._name, 1)
         top.addWidget(self._facts)
         lay.addLayout(top)
 
-        bottom = QHBoxLayout(); bottom.setSpacing(6)
+        bottom = QHBoxLayout(); bottom.setSpacing(SP_S)
         bottom.addSpacing(24)
         self._state = QLabel(self)
-        self._state.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
+        self._state.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_CAPTION}px;")
         self._state.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         bottom.addWidget(self._state, 1)
-        self._btns = QHBoxLayout(); self._btns.setSpacing(4)
+        self._btns = QHBoxLayout(); self._btns.setSpacing(SP_XS)
         bottom.addLayout(self._btns)
         lay.addLayout(bottom)
 
@@ -141,7 +142,7 @@ class QueueCard(QWidget):
         icon = "✋" if waiting else ICONS[status]
         color = _AMBER if waiting else ICON_COLORS[status]
         self._icon.setText(icon)
-        self._icon.setStyleSheet(f"color: {color}; font-size: 13px;")
+        self._icon.setStyleSheet(f"color: {color}; font-size: {FS_BODY}px;")
         self._full_name = job.path.name
         self._elide_name()
         self.setToolTip(str(job.path))
@@ -164,7 +165,7 @@ class QueueCard(QWidget):
             text, tcolor = "Đã hủy", _TXT_MID
         self._state.setText(text)
         self._state.setToolTip(text)
-        self._state.setStyleSheet(f"color: {tcolor}; font-size: 11px;")
+        self._state.setStyleSheet(f"color: {tcolor}; font-size: {FS_CAPTION}px;")
         self._set_buttons("waiting" if waiting else status)
 
     def _set_buttons(self, state: str) -> None:

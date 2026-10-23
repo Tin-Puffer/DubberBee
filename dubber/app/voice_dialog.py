@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from dubber.app.tasks import BusyBar, TaskRunner
 from dubber.core.tts import voice_library as vl
 from dubber.core.utils.ffmpeg_locator import find_ffprobe, no_window
+from dubber.app.theme import FS_HINT, SP_L, SP_M
 
 SAMPLE_SENTENCE = "Xin chào, đây là giọng đọc thử nghiệm."
 _FILE_FILTER = ("Âm thanh / video (*.wav *.mp3 *.m4a *.flac *.ogg *.mp4 *.mkv *.mov *.avi *.webm)"
@@ -53,6 +54,8 @@ class CloneVoiceDialog(QDialog):
         self._player = None
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         form = QFormLayout()
         lay.addLayout(form)
 
@@ -96,7 +99,7 @@ class CloneVoiceDialog(QDialog):
         lay.addWidget(self._lbl_status)
 
         note = QLabel("Dùng 5–8 giây rõ tiếng, một người nói, không nhạc nền", self)
-        note.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+        note.setStyleSheet(f"color: {_DIM}; font-size: {FS_HINT}px;")
         lay.addWidget(note)
 
         row = QHBoxLayout(); row.addStretch(1)
@@ -243,7 +246,7 @@ class CloneVoiceDialog(QDialog):
 
     def _status(self, text: str, color: str = _DIM):
         self._lbl_status.setText(text)
-        self._lbl_status.setStyleSheet(f"color: {color}; font-size: 12px;")
+        self._lbl_status.setStyleSheet(f"color: {color}; font-size: {FS_HINT}px;")
 
     def reject(self):
         if self._busy:   # a running thread must finish first

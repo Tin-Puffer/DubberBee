@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QVBoxLayout,
 )
+from dubber.app.theme import FS_HINT, SP_L, SP_M
 
 _DIM = "#888"
 
@@ -44,6 +45,8 @@ class WorkspaceDialog(QDialog):
         self._edits: dict = {}
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         intro = QLabel(
             "Nơi Dubber Bee lưu file. Bấm <b>Mở</b> để xem / xóa bằng tay; <b>Đổi…</b> để dùng "
             "thư mục khác (Dubber Bee tạo thư mục con riêng bên trong, không đụng tới file khác).",
@@ -108,7 +111,7 @@ class WorkspaceDialog(QDialog):
         self._row += 1
         if note:
             n = QLabel(note, self)
-            n.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+            n.setStyleSheet(f"color: {_DIM}; font-size: {FS_HINT}px;")
             self._grid.addWidget(n, self._row, 1)
             self._row += 1
 
