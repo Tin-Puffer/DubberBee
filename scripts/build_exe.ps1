@@ -123,7 +123,8 @@ Remove-Item $zip -Force -ErrorAction SilentlyContinue
 # Windows' own bsdtar writes zip64 (Compress-Archive breaks on > 2 GB). Call it by full
 # path: Git for Windows puts GNU tar on PATH, which cannot write zip.
 $bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
-& $bsdtar -a -c -f $zip -C dist Dubber
+# Strongest deflate: the bundle sits just under GitHub's 2 GiB release-asset limit
+& $bsdtar -a -c -f $zip --options zip:compression-level=9 -C dist Dubber
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "      tar failed - falling back to .NET ZipFile"
     Remove-Item $zip -Force -ErrorAction SilentlyContinue

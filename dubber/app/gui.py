@@ -529,6 +529,7 @@ class DropZone(QFrame):
 
 
 APP_NAME = "Dubber Bee"
+FILE_MANAGER = "Explorer" if sys.platform == "win32" else "Finder"
 
 
 class _NoWheelChange(QObject):
@@ -2451,7 +2452,7 @@ class MainWindow(QWidget):
         add("▶  Xem video kết quả", "play", done)
         add("📋  Copy prompt TikTok", "tiktok", done)
         add("📝  Mở file prompt TikTok (.txt)", "open_txt", bool(txt and txt.exists()))
-        add("📂  Hiện video trong Finder", "reveal", done)
+        add(f"📂  Hiện video trong {FILE_MANAGER}", "reveal", done)
         add("📁  Mở thư mục cache của video", "jobdir")
         menu.addSeparator()
         if len(rows) > 1:
@@ -2884,7 +2885,8 @@ def run_gui() -> None:
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
     from PySide6.QtGui import QIcon
-    app.setWindowIcon(QIcon(str(_LOGO_DIR / "logo_1024.png")))   # Dock / taskbar
+    big = _LOGO_DIR / "logo_1024.png"   # not shipped in the Windows bundle (it has icon.ico)
+    app.setWindowIcon(QIcon(str(big if big.exists() else _LOGO_DIR / "logo_256.png")))
     register_qt_fonts()
     app.setStyle("Fusion")
 

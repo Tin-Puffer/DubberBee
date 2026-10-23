@@ -2,6 +2,8 @@
 instructions, temporary files) — kept out of the per-video tabs."""
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout,
@@ -238,7 +240,9 @@ class SettingsDialog(QDialog):
         self._chk_notify.setChecked(notify.enabled())
         self._chk_notify.toggled.connect(self._save_notify)
         section("Thông báo", self._chk_notify,
-                note="Thông báo hệ thống + biểu tượng Dock — chỉ khi bạn đang ở cửa sổ khác.")
+                note=("Âm báo + nháy thanh tác vụ" if sys.platform == "win32"
+                      else "Thông báo hệ thống + biểu tượng Dock")
+                     + " — chỉ khi bạn đang ở cửa sổ khác.")
 
         self.prompt_rows = {k: PromptRow(k, self) for k in ("review", "tiktok")}
         section("Prompt AI", *self.prompt_rows.values(),

@@ -1,6 +1,8 @@
 """One queued video as a two-line card: name + facts, then state + the actions that fit it."""
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
@@ -27,7 +29,8 @@ ACTIONS = {
     "running": [("cancel", "⊘ Hủy", "Dừng ngay video này và xóa file tạm của nó")],
     "done": [("play", "▶ Xem", "Mở video kết quả"),
              ("tiktok", "📋 TikTok", "Copy prompt TikTok (kèm lời thoại) để dán vào ChatGPT"),
-             ("reveal", "📂", "Hiện video trong Finder"),
+             ("reveal", "📂", "Hiện video trong "
+                         + ("Explorer" if sys.platform == "win32" else "Finder")),
              ("rerun", "↻", "Chạy lại video này")],
     "error": [("show_error", "Xem lỗi", "Xem chi tiết lỗi"),
               ("rerun", "↻ Thử lại", "Đưa video về hàng đợi để chạy lại")],

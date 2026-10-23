@@ -82,7 +82,10 @@ for _name in (['ffmpeg', 'ffprobe'] if IS_MAC else ['ffmpeg.exe', 'ffprobe.exe']
 font_datas = [(str(_f), 'dubber/assets/fonts') for _f in (project_root / 'dubber' / 'assets' / 'fonts').glob('*.ttf')]
 # App logo (header + Dock / taskbar icon at runtime; see gui.app_logo)
 logo_dir = project_root / 'dubber' / 'assets' / 'logo'
-font_datas += [(str(_f), 'dubber/assets/logo') for _f in logo_dir.glob('logo_*.png')]
+# logo_1024.png (macOS Dock icon) stays out of the Windows bundle: it uses icon.ico, and the
+# Windows zip sits just under GitHub's 2 GiB release-asset limit
+font_datas += [(str(_f), 'dubber/assets/logo') for _f in logo_dir.glob('logo_*.png')
+               if IS_MAC or _f.name != 'logo_1024.png']
 
 ffmpeg_mac_datas = []
 _ffmac = project_root / 'resources' / 'ffmpeg-mac'

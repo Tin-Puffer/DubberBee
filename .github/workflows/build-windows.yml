@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  RELEASE_TAG: v0.1.0
+  RELEASE_TAG: v0.2.0
 
 permissions:
   contents: write

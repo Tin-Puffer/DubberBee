@@ -1,7 +1,7 @@
 """Edit one chatbot prompt (⚙ Cài đặt → Chatbot): save it, or put the default back."""
 from __future__ import annotations
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
@@ -39,8 +39,7 @@ class PromptDialog(QDialog):
         lay.addWidget(self._state)
 
         self.edit = QPlainTextEdit(self)
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.Monospace)
+        mono = QFontDatabase.systemFont(QFontDatabase.FixedFont)   # Menlo / Consolas
         mono.setPointSize(12)
         self.edit.setFont(mono)
         self.edit.setPlainText(prompts.get_prompt(kind))
