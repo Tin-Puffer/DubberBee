@@ -23,9 +23,11 @@ dependencies = [
     # Groq key saved from the GUI → macOS Keychain / Windows Credential Manager
     "keyring>=25",
     # Subtitles: measure text with the real font (1-line cues, blur box), Vietnamese
-    # word segmentation so a cue is never cut inside a word
+    # word segmentation so a cue is never cut inside a word. pyvi needs python-crfsuite,
+    # which has no Intel-Mac wheel (would compile from source) — skipped there, the
+    # subtitle cutter falls back to its built-in word list.
     "Pillow>=10",
-    "pyvi>=0.1.1",
+    "pyvi>=0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]

@@ -53,6 +53,21 @@ def test_no_cue_ends_with_a_weak_word():
         assert cue.split()[-1].strip(",.") not in {"chính", "là", "của", "và", "đều", "vừa", "để"}
 
 
+def test_works_without_pyvi(monkeypatch):
+    """Intel Macs don't install pyvi — the built-in word list still keeps common words whole."""
+    import builtins
+    real_import = builtins.__import__
+
+    def no_pyvi(name, *a, **k):
+        if name == "pyvi" or name.startswith("pyvi."):
+            raise ImportError(name)
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_pyvi)
+    out = _split_to_chunks("Phô mai giúp bổ sung năng lượng cho một ngày lao động.", lambda t: len(t) <= 35)
+    assert " ".join(out).split() == "Phô mai giúp bổ sung năng lượng cho một ngày lao động.".split()
+    assert "năng" not in [c.split()[-1] for c in out]
+
+
 def test_cutting_keeps_every_word_once():
     text = " ".join(["từ"] * 60) + "."
     out = _split_to_chunks(text, _fits)

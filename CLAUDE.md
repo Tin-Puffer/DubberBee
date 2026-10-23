@@ -46,7 +46,9 @@ powershell -ExecutionPolicy Bypass -File setup_dev.ps1 -All
   rồi `python spike/download_models.py`.
 - Thư viện phụ đề (có trong `dependencies`, `dubber.spec` đóng gói sẵn): `Pillow` (đo độ rộng chữ
   theo font thật → sub 1 dòng, vùng mờ tự động), `pyvi` (tách từ tiếng Việt → không cắt dòng giữa
-  một từ; chạy không cần sklearn). Venv cũ: chạy lại `pip install -e ".[dev,offline,vieneu]"`.
+  một từ; chạy không cần sklearn). Venv cũ: chạy lại `pip install -e ".[dev,offline,vieneu]"`
+  (script build Mac/Windows tự cài phần còn thiếu). Mac Intel không cài `pyvi` (không có wheel
+  `python-crfsuite`) → cắt câu dùng danh sách từ ghép có sẵn; Mac Apple Silicon (M1…) có đủ.
 
 ---
 

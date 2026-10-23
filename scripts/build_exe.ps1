@@ -29,10 +29,12 @@ Write-Host "=== Dubber Windows build ===" -ForegroundColor Cyan
 Write-Host "Project root: $project_root"
 if (-not (Test-Path $py)) { throw ".venv not found - run: powershell -ExecutionPolicy Bypass -File setup_dev.ps1" }
 
-# -- 1. PyInstaller ------------------------------------------------------------
-Write-Host "[1/5] Installing PyInstaller..." -ForegroundColor Yellow
+# -- 1. PyInstaller + any dependency added since setup (e.g. Pillow, pyvi) ------
+Write-Host "[1/5] Installing PyInstaller + missing dependencies..." -ForegroundColor Yellow
 & $py -m pip install --quiet "pyinstaller>=6.0"
 if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller failed" }
+& $py -m pip install --quiet -e ".[offline,vieneu]"
+if ($LASTEXITCODE -ne 0) { throw "pip install dependencies failed" }
 
 # -- 2. resources\: FFmpeg -----------------------------------------------------
 Write-Host "[2/5] Preparing resources\..." -ForegroundColor Yellow

@@ -23,9 +23,11 @@ echo "Project root: $ROOT"
 
 [[ -x "$PY" ]] || { echo "✗ .venv not found — run: bash scripts/setup_mac.sh"; exit 1; }
 
-# ── 1. PyInstaller ────────────────────────────────────────────────────────────
-echo "[1/5] Installing PyInstaller..."
+# ── 1. PyInstaller + any dependency added since setup (e.g. Pillow, pyvi) ─────
+echo "[1/5] Installing PyInstaller + missing dependencies..."
 "$PY" -m pip install --quiet "pyinstaller>=6.0"
+"$PY" -m pip install --quiet -e ".[offline,vieneu]"
+"$PY" -c "import PIL" || { echo "✗ Pillow missing — subtitles need it"; exit 1; }
 
 # ── 2. resources/: FFmpeg ─────────────────────────────────────────────────────
 echo "[2/5] Preparing resources/..."
@@ -104,6 +106,16 @@ if [[ -z "$BUNDLED_FF" ]] || ! has_ass "$BUNDLED_FF"; then
 fi
 if [[ "$(otool -L "$BUNDLED_FF")" =~ /opt/homebrew|/usr/local/opt|/usr/local/Cellar ]]; then
     echo "  ⚠ bundled ffmpeg still links Homebrew dylibs — it will only run where Homebrew ffmpeg-full is installed"
+fi
+# pyvi's word-segmentation model (subtitle line cutting) — Apple Silicon only, see pyproject
+if "$PY" -c "import pyvi" 2>/dev/null; then
+    if [[ -z "$(find "$APP/Contents" -path "*pyvi/models/pyvi3.pkl" | head -1)" ]]; then
+        echo "✗ pyvi model missing in bundle"
+        exit 1
+    fi
+    echo "      pyvi model: bundled"
+else
+    echo "      pyvi: not installed (Intel Mac) — subtitles use the built-in word list"
 fi
 codesign --force --deep --sign - "$APP" 2>/dev/null || echo "  ⚠ ad-hoc codesign failed (app still runs locally)"
 

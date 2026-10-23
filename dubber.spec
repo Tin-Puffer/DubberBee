@@ -25,9 +25,15 @@
 #   - torchaudio
 #   - gradio (VieNeu's web UI only)
 
+import importlib.util
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, copy_metadata
+
+
+def _installed(pkg: str) -> bool:
+    """Optional packages (pyvi is skipped on Intel Macs) are bundled only when present."""
+    return importlib.util.find_spec(pkg) is not None
 
 block_cipher = None
 project_root = Path(SPECPATH)
@@ -42,6 +48,9 @@ transformers_datas, transformers_binaries, transformers_hiddenimports = collect_
 extra_datas, extra_binaries, extra_hiddenimports = [], [], []
 for _pkg in ('audio_separator', 'torchvision', 'vieneu', 'vieneu_utils', 'sea_g2p', 'librosa', 'soxr',
              'kaldi_native_fbank', 'keyring', 'pyvi', 'pycrfsuite', 'sklearn_crfsuite'):
+    if not _installed(_pkg):
+        print(f'[dubber.spec] {_pkg} not installed — not bundled')
+        continue
     _d, _b, _h = collect_all(_pkg)
     extra_datas += _d; extra_binaries += _b; extra_hiddenimports += _h
 # keyring finds its OS backends (Keychain / Credential Manager) through entry points
@@ -117,8 +126,9 @@ a = Analysis(
         'torch', 'torch.nn', 'torch.jit', 'torch.utils', 'torch.utils.data',
         # Subtitles: text measuring (Pillow) + Vietnamese word segmentation (pyvi → CRF
         # model pickles in pyvi/models, collected above; works without sklearn)
-        'PIL', 'PIL.ImageFont', 'pyvi', 'pyvi.ViTokenizer', 'sklearn_crfsuite', 'pycrfsuite',
-        'tabulate',
+        'PIL', 'PIL.ImageFont',
+        *([ 'pyvi', 'pyvi.ViTokenizer', 'sklearn_crfsuite', 'pycrfsuite', 'tabulate']
+          if _installed('pyvi') else []),
         # Other
         'platformdirs', 'soundfile', 'resampy', 'cffi', 'pycparser',
         *sherpa_hiddenimports,
