@@ -21,6 +21,10 @@ from PySide6.QtWidgets import (
 )
 
 from dubber.app.tasks import BusyBar, TaskRunner
+from dubber.app.theme import (
+    CONTROL_H, FS_BODY, FS_CAPTION, FS_HINT, FS_TITLE, GROUP_MARGINS, PRIMARY_H,
+    SP_L, SP_M, SP_S, SP_XS,
+)
 
 _DARK_BG   = "#111"
 _PANEL_BG  = "#181818"
@@ -39,20 +43,25 @@ _TXT_BRIGHT= "#eee"
 _BASE_STYLE = f"""
 QWidget                   {{ background: {_DARK_BG}; color: {_TXT_MAIN}; }}
 QGroupBox                 {{ background: {_PANEL_BG}; border: 1px solid {_BORDER};
-                             border-radius: 8px; margin-top: 8px;
-                             font-size: 10px; color: {_TXT_DIM}; }}
+                             border-radius: 8px; margin-top: 8px; padding-top: 6px;
+                             font-size: {FS_CAPTION}px; font-weight: 600; color: {_TXT_MID}; }}
 QGroupBox::title          {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
-QCheckBox                 {{ color: {_TXT_MAIN}; font-size: 13px; spacing: 6px; }}
-QCheckBox::indicator      {{ width: 15px; height: 15px; border-radius: 3px;
+QLabel                    {{ font-size: {FS_BODY}px; }}
+QCheckBox                 {{ color: {_TXT_MAIN}; font-size: {FS_BODY}px; spacing: {SP_S}px; }}
+QCheckBox::indicator      {{ width: 16px; height: 16px; border-radius: 4px;
                              border: 1px solid #484848; background: #222; }}
 QCheckBox::indicator:checked  {{ background: {_ACCENT}; border-color: {_ACCENT}; }}
 QCheckBox::indicator:disabled {{ background: #1e1e1e; border-color: #2e2e2e; }}
-QComboBox                 {{ background: {_SURFACE}; border: 1px solid #3a3a3a;
-                             border-radius: 5px; padding: 4px 10px;
-                             font-size: 12px; color: {_TXT_MAIN}; min-height: 26px; }}
+QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit
+                          {{ background: {_SURFACE}; border: 1px solid #3a3a3a; border-radius: 6px;
+                             padding: 0 10px; font-size: {FS_BODY}px; color: {_TXT_MAIN};
+                             min-height: {CONTROL_H - 2}px; }}
+QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QLineEdit:disabled
+                          {{ color: {_TXT_DIM}; border-color: {_BORDER}; }}
 QComboBox::drop-down      {{ border: none; width: 20px; }}
 QComboBox QAbstractItemView {{ background: {_SURFACE}; border: 1px solid #3a3a3a;
-                               selection-background-color: #2a2a2a; color: {_TXT_MAIN}; }}
+                               selection-background-color: #2a2a2a; color: {_TXT_MAIN};
+                               font-size: {FS_BODY}px; }}
 QSlider::groove:horizontal {{ background: #2a2a2a; height: 4px; border-radius: 2px; }}
 QSlider::handle:horizontal {{ background: {_ACCENT}; width: 14px; height: 14px;
                                margin: -5px 0; border-radius: 7px; }}
@@ -60,28 +69,18 @@ QSlider::sub-page:horizontal {{ background: {_ACCENT}; border-radius: 2px; }}
 QSlider::groove:horizontal:disabled {{ background: #222; }}
 QSlider::handle:horizontal:disabled {{ background: #3a3a3a; }}
 QSlider::sub-page:horizontal:disabled {{ background: #2a2a2a; }}
-QDoubleSpinBox            {{ background: {_SURFACE}; border: 1px solid #3a3a3a;
-                             border-radius: 4px; padding: 2px 4px;
-                             font-size: 12px; color: {_TXT_MAIN}; min-height: 22px; }}
-QDoubleSpinBox:disabled   {{ color: {_TXT_DIM}; border-color: {_BORDER}; }}
 QLabel, QCheckBox, QRadioButton, QSlider {{ background: transparent; }}
-QLabel                    {{ font-size: 13px; }}
-QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {{ min-height: 28px; }}
-QSpinBox                  {{ background: {_SURFACE}; border: 1px solid #3a3a3a; border-radius: 5px;
-                             padding: 2px 6px; font-size: 12px; color: {_TXT_MAIN}; }}
-QSpinBox:disabled         {{ color: {_TXT_DIM}; border-color: {_BORDER}; }}
-QDoubleSpinBox            {{ border-radius: 5px; padding: 2px 6px; }}
-QComboBox:disabled        {{ color: {_TXT_DIM}; border-color: {_BORDER}; }}
 QTabWidget::pane          {{ border: 1px solid {_BORDER}; border-radius: 8px; background: {_PANEL_BG};
                              top: -1px; }}
 QTabBar                   {{ background: transparent; }}
-QTabBar::tab              {{ background: transparent; color: {_TXT_MID}; padding: 9px 16px;
+QTabBar::tab              {{ background: transparent; color: {_TXT_MID}; padding: {SP_S}px {SP_L}px;
                              border: none; border-bottom: 2px solid transparent;
-                             font-size: 13px; margin-right: 2px; }}
+                             font-size: {FS_BODY}px; margin-right: 2px; }}
 QTabBar::tab:selected     {{ color: {_TXT_BRIGHT}; border-bottom: 2px solid {_ACCENT}; }}
 QTabBar::tab:hover:!selected {{ color: {_TXT_MAIN}; }}
 QTabBar::tab:disabled     {{ color: {_TXT_DIM}; }}
-QGroupBox                 {{ font-size: 11px; color: {_TXT_MID}; font-weight: 600; padding-top: 6px; }}
+QToolTip                  {{ background: #262626; color: {_TXT_MAIN}; border: 1px solid #3a3a3a;
+                             padding: 4px 8px; font-size: {FS_HINT}px; }}
 """
 
 
@@ -474,8 +473,8 @@ class DropZone(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 10, 16, 10)
-        lay.setSpacing(12)
+        lay.setContentsMargins(SP_L, SP_M, SP_L, SP_M)
+        lay.setSpacing(SP_M)
 
         self._icon = QLabel("🎬", self)
         self._icon.setFixedWidth(28)
@@ -484,7 +483,7 @@ class DropZone(QFrame):
 
         self._label = QLabel("Kéo thả video vào đây (nhiều file)  ·  hoặc bấm để chọn", self)
         self._label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        self._label.setStyleSheet(f"color: {_TXT_DIM}; font-size: 13px; border: none; background: transparent;")
+        self._label.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_BODY}px; border: none; background: transparent;")
 
         lay.addWidget(self._icon)
         lay.addWidget(self._label, 1)
@@ -578,7 +577,7 @@ def app_logo(size: int) -> QPixmap:
 
 _SMALL_BTN_STYLE = (
     f"QPushButton {{ background: {_SURFACE}; color: {_TXT_MID}; border: 1px solid {_BORDER};"
-    " border-radius: 5px; font-size: 12px; padding: 0 10px; }"
+    f" border-radius: 6px; font-size: {FS_BODY}px; padding: 0 {SP_M}px; }}"
     f"QPushButton:hover {{ background: #2a2a2a; color: {_TXT_MAIN}; }}"
     " QPushButton:disabled { background: #161616; color: #333; border-color: #1e1e1e; }"
 )
@@ -588,23 +587,54 @@ _qt_fonts_registered = False
 
 
 def register_qt_fonts() -> None:
-    """Make the bundled subtitle fonts usable by Qt (combo preview, frame editor)."""
+    """Make the bundled fonts usable by Qt: subtitle fonts (combo preview, frame editor)
+    and the interface font's lighter weights."""
     global _qt_fonts_registered
     if _qt_fonts_registered:
         return
-    from dubber.core.video.fonts import fonts_dir
-    for ttf in sorted(fonts_dir().glob("*.ttf")):
-        QFontDatabase.addApplicationFont(str(ttf))
+    from dubber.core.video.fonts import fonts_dir, ui_fonts_dir
+    for d in (fonts_dir(), ui_fonts_dir()):
+        for ttf in sorted(d.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(ttf))
     _qt_fonts_registered = True
+
+
+# Widget classes the platform gives their own font (macOS: the system font for labels,
+# buttons, check boxes, lists…). These override QApplication.setFont(font), so each one
+# gets the interface family too — its own size is kept.
+_THEME_FONT_CLASSES = (
+    "QLabel", "QPushButton", "QCheckBox", "QRadioButton", "QToolButton", "QMenu",
+    "QMenuBar", "QMenuItem", "QMessageBox", "QTipLabel", "QStatusBar", "QAbstractItemView",
+    "QListView", "QHeaderView", "QComboMenuItem", "QComboLineEdit", "QSmallFont", "QMiniFont",
+)
+
+
+def apply_ui_font(app: QApplication) -> None:
+    """Use FZ Poppins at FS_BODY for the whole interface (system font when it's missing).
+
+    Call after QApplication.setStyle(), which puts the system font back on every class."""
+    from dubber.core.video.fonts import UI_FONT
+    register_qt_fonts()
+    if UI_FONT not in QFontDatabase.families():
+        log.warning("Interface font %r not found — using the system font", UI_FONT)
+        return
+    for cls in _THEME_FONT_CLASSES:
+        f = QApplication.font(cls)
+        f.setFamily(UI_FONT)
+        app.setFont(f, cls)
+    font = app.font()
+    font.setFamily(UI_FONT)
+    font.setPixelSize(FS_BODY)
+    app.setFont(font)
 
 
 def _form_page(parent) -> "tuple[QWidget, QFormLayout]":
     """A tab page with an aligned label/field form."""
     page = QWidget(parent)
     form = QFormLayout(page)
-    form.setContentsMargins(18, 18, 18, 14)
-    form.setHorizontalSpacing(18)
-    form.setVerticalSpacing(12)
+    form.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+    form.setHorizontalSpacing(SP_L)
+    form.setVerticalSpacing(SP_M)
     form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     form.setRowWrapPolicy(QFormLayout.DontWrapRows)
@@ -633,19 +663,61 @@ def _scrollable(page: QWidget) -> QWidget:
 
 
 def _finish_form(form: "QFormLayout") -> None:
-    """Make every label as tall as a field and centre it, so rows line up."""
-    for i in range(form.rowCount()):
-        item = form.itemAt(i, QFormLayout.LabelRole)
-        w = item.widget() if item else None
-        field = form.itemAt(i, QFormLayout.FieldRole)
-        if field and isinstance(field.widget(), QCheckBox):
-            field.widget().setMinimumHeight(30)  # same row height as combo rows
-        if w is not None:
-            w.setMinimumHeight(30)
-            if isinstance(w, QLabel):
-                w.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                if not w.styleSheet():
-                    w.setStyleSheet(f"color: {_TXT_MID};")
+    """Tidy a finished form page so every row lines up the same way.
+
+    A row with an empty label (a note, the trim editor…) belongs to the option above it:
+    it moves into that row, SP_XS under the field, instead of being a separate row with
+    a full SP_M gap above it. Labels are one control tall, so they line up with the
+    first line of their field.
+    """
+    rows = []   # (label widget or None, field widget, spans the whole row)
+    while form.rowCount():
+        spanning = form.itemAt(0, QFormLayout.SpanningRole) is not None
+        taken = form.takeRow(0)
+        label = taken.labelItem.widget() if taken.labelItem else None
+        field = taken.fieldItem.widget() if taken.fieldItem else None
+        if field is not None:
+            rows.append((label, field, spanning))
+
+    groups: list = []   # [label, [field, notes…], spanning]
+    for label, field, spanning in rows:
+        # addRow("", w) creates no label at all; an empty QLabel counts the same
+        no_label = label is None or (isinstance(label, QLabel) and not label.text())
+        if no_label and not spanning and groups and not groups[-1][2]:
+            groups[-1][1].append(field)
+            if label is not None:
+                label.deleteLater()
+        else:
+            groups.append([label, [field], spanning])
+
+    for label, fields, spanning in groups:
+        if spanning or label is None:
+            form.addRow(fields[0])
+            continue
+        field = fields[0]
+        if len(fields) > 1:
+            field = QWidget(form.parentWidget())
+            col = QVBoxLayout(field)
+            col.setContentsMargins(0, 0, 0, 0)
+            col.setSpacing(SP_XS)
+            for f in fields:
+                col.addWidget(f)
+        form.addRow(label, field)
+        # Every option is one control tall (check boxes, slider rows…), so it centres on its label
+        if fields[0].sizeHint().height() < CONTROL_H:
+            fields[0].setMinimumHeight(CONTROL_H)
+        label.setFixedHeight(CONTROL_H)
+        if isinstance(label, QLabel):
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            if not label.styleSheet():
+                label.setStyleSheet(f"color: {_TXT_MID};")
+
+    # Number boxes ignore the style sheet's padding: indent their text like the combo boxes
+    page = form.parentWidget()
+    if page is not None:
+        from PySide6.QtWidgets import QAbstractSpinBox
+        for spin in page.findChildren(QAbstractSpinBox):
+            spin.lineEdit().setTextMargins(SP_XS, 0, 0, 0)
 
 
 def _hbox(*widgets, stretch_first: bool = True, stretch_last: bool = True) -> QWidget:
@@ -653,7 +725,7 @@ def _hbox(*widgets, stretch_first: bool = True, stretch_last: bool = True) -> QW
     box = QWidget()
     lay = QHBoxLayout(box)
     lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(10)
+    lay.setSpacing(SP_S)
     for i, w in enumerate(widgets):
         lay.addWidget(w, 1 if (i == 0 and stretch_first and stretch_last) else 0)
     if not stretch_last:
@@ -672,7 +744,7 @@ def _fmt_bytes(n: int) -> str:
 def _hint_label(parent, text: str = "") -> QLabel:
     lbl = QLabel(text, parent)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: 12px;")
+    lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_HINT}px;")
     return lbl
 
 
@@ -735,7 +807,7 @@ def _add_hint(form: "QFormLayout", widget: QWidget, hints, default: str = "") ->
 
 def _small_button(text: str, parent) -> QPushButton:
     b = QPushButton(text, parent)
-    b.setFixedHeight(30)
+    b.setFixedHeight(CONTROL_H)
     b.setStyleSheet(_SMALL_BTN_STYLE)
     return b
 
@@ -747,7 +819,7 @@ class _ColorButton(QPushButton):
     def __init__(self, color: str, title: str, parent=None):
         super().__init__(parent)
         self._title = title
-        self.setFixedSize(120, 30)
+        self.setFixedSize(120, CONTROL_H)
         self.clicked.connect(self._pick)
         self.set_color(color)
 
@@ -760,7 +832,7 @@ class _ColorButton(QPushButton):
         self.setText(self._color)
         self.setStyleSheet(
             f"QPushButton {{ background: {self._color}; color: {'#111' if light else '#eee'};"
-            f" border: 1px solid {_BORDER}; border-radius: 5px; font-size: 12px; }}")
+            f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: {FS_BODY}px; }}")
 
     def _pick(self):
         from PySide6.QtWidgets import QColorDialog
@@ -787,9 +859,9 @@ def _make_vol_slider(parent, default: int = 20, max_val: int = 100) -> tuple:
     sld.setRange(0, max_val)
     sld.setValue(default)
     lbl = QLabel(f"{default}%", parent)
-    lbl.setFixedWidth(38)
+    lbl.setFixedWidth(44)   # "200%" in the interface font
     lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    lbl.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
+    lbl.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_CAPTION}px;")
     sld.valueChanged.connect(lambda v: lbl.setText(f"{v}%"))
     return sld, lbl
 
@@ -815,7 +887,7 @@ class OptionsPanel(QWidget):
         self._read_only = False
         self._banner = QLabel("🔒  Video đang xử lý — chỉ xem, không chỉnh sửa", self)
         self._banner.setStyleSheet(
-            f"color: {_AMBER}; font-size: 11px; padding: 4px 8px;"
+            f"color: {_AMBER}; font-size: {FS_CAPTION}px; padding: {SP_XS}px {SP_S}px;"
             " background: #2a2416; border-radius: 4px;")
         self._banner.hide()
         outer.addWidget(self._banner)
@@ -944,7 +1016,7 @@ class OptionsPanel(QWidget):
         self._combo_font = QComboBox(self)
         for family, label in SUBTITLE_FONTS:
             self._combo_font.addItem(label, userData=family)
-            f = QFont(family); f.setBold(True); f.setPixelSize(13)
+            f = QFont(family); f.setBold(True); f.setPixelSize(FS_BODY)
             self._combo_font.setItemData(self._combo_font.count() - 1, f, Qt.FontRole)
         _select_data(self._combo_font, DEFAULT_FONT)
         form.addRow("Font chữ", self._combo_font)
@@ -1109,9 +1181,9 @@ class OptionsPanel(QWidget):
     def _update_vi_label(self, v: int):
         self._lbl_vi_vol.setText(f"{v}%")
         if v > 100:
-            self._lbl_vi_vol.setStyleSheet(f"color: {_AMBER}; font-size: 11px; font-weight: bold;")
+            self._lbl_vi_vol.setStyleSheet(f"color: {_AMBER}; font-size: {FS_CAPTION}px; font-weight: bold;")
         else:
-            self._lbl_vi_vol.setStyleSheet(f"color: {_GREEN}; font-size: 11px; font-weight: bold;")
+            self._lbl_vi_vol.setStyleSheet(f"color: {_GREEN}; font-size: {FS_CAPTION}px; font-weight: bold;")
 
     # ── Getters ───────────────────────────────────────────────────────────────
 
@@ -1536,15 +1608,15 @@ class VideoInfoPanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Thông tin video gốc", parent)
         grid = QGridLayout(self)
-        grid.setContentsMargins(12, 16, 12, 10)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(3)
+        grid.setContentsMargins(*GROUP_MARGINS)
+        grid.setHorizontalSpacing(SP_M)
+        grid.setVerticalSpacing(SP_XS)
         self._val: dict[str, QLabel] = {}
         for r, (key, label) in enumerate(self._ROWS):
             k = QLabel(label, self)
-            k.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px;")
+            k.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_HINT}px;")
             v = QLabel("—", self)
-            v.setStyleSheet(f"color: {_TXT_MAIN}; font-size: 12px;")
+            v.setStyleSheet(f"color: {_TXT_MAIN}; font-size: {FS_BODY}px;")
             v.setTextInteractionFlags(Qt.TextSelectableByMouse)
             grid.addWidget(k, r, 0)
             grid.addWidget(v, r, 1)
@@ -1555,7 +1627,7 @@ class VideoInfoPanel(QGroupBox):
         self._thumb.setFixedSize(256, 144)
         self._thumb.setAlignment(Qt.AlignCenter)
         self._thumb.setStyleSheet(f"background: #0c0c0c; border: 1px solid {_BORDER};"
-                                  f" border-radius: 4px; color: {_TXT_DIM}; font-size: 11px;")
+                                  f" border-radius: 6px; color: {_TXT_DIM}; font-size: {FS_CAPTION}px;")
         self._thumb.setToolTip("Xem nhanh phụ đề trên một khung hình (gần đúng).\n"
                                "Tab Phụ đề → “Xem trước trên video…” để xem chính xác.")
         grid.addWidget(self._thumb, 0, 2, len(self._ROWS), 1, Qt.AlignRight | Qt.AlignTop)
@@ -1591,10 +1663,10 @@ class VideoInfoPanel(QGroupBox):
             ch = {1: "mono", 2: "stereo"}.get(info.channels, f"{info.channels} kênh")
             ak = f" · {info.audio_kbps} kbps" if info.audio_kbps else ""
             self._val["audio"].setText(f"{info.audio_codec.upper()} · {info.sample_rate / 1000:g} kHz · {ch}{ak}")
-            self._val["audio"].setStyleSheet(f"color: {_TXT_MAIN}; font-size: 12px;")
+            self._val["audio"].setStyleSheet(f"color: {_TXT_MAIN}; font-size: {FS_BODY}px;")
         else:
             self._val["audio"].setText("⚠ Không có âm thanh — không thể lồng tiếng")
-            self._val["audio"].setStyleSheet(f"color: {_RED}; font-size: 12px;")
+            self._val["audio"].setStyleSheet(f"color: {_RED}; font-size: {FS_BODY}px;")
 
 
 # ── Output settings panel (global, persisted) ─────────────────────────────────
@@ -1608,31 +1680,26 @@ class OutputPanel(QGroupBox):
         self._settings = load_settings()
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 16, 12, 12)
-        lay.setSpacing(6)
+        lay.setContentsMargins(*GROUP_MARGINS)
+        lay.setSpacing(SP_S)
 
         self._chk_beside = QCheckBox("Lưu cạnh video gốc", self)
         lay.addWidget(self._chk_beside)
 
-        row = QHBoxLayout(); row.setSpacing(8)
+        row = QHBoxLayout(); row.setSpacing(SP_S)
         self._edit_dir = QLineEdit(self)
         self._edit_dir.setReadOnly(True)
         self._edit_dir.setPlaceholderText("Chọn thư mục…")
-        self._edit_dir.setStyleSheet(
-            f"QLineEdit {{ background: {_SURFACE}; border: 1px solid #3a3a3a; border-radius: 5px;"
-            f" padding: 4px 8px; font-size: 12px; color: {_TXT_MAIN}; min-height: 22px; }}"
-            f"QLineEdit:disabled {{ color: {_TXT_DIM}; border-color: {_BORDER}; }}"
-        )
         row.addWidget(self._edit_dir, 1)
         self._btn_browse = QPushButton("Chọn…", self)
-        self._btn_browse.setFixedHeight(30)
+        self._btn_browse.setFixedHeight(CONTROL_H)
         self._btn_browse.setStyleSheet(_SMALL_BTN_STYLE)
         self._btn_browse.clicked.connect(self._browse)
         row.addWidget(self._btn_browse)
         lay.addLayout(row)
 
         hint = QLabel("Tên file: <tên gốc>_vi.mp4 (+ _vi.txt) — không ghi đè file đã có", self)
-        hint.setStyleSheet(f"color: {_TXT_DIM}; font-size: 10px;")
+        hint.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_HINT}px;")
         lay.addWidget(hint)
 
         out_dir = self._settings.get("output_dir")
@@ -1677,16 +1744,16 @@ class StepRow(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(8)
+        lay.setSpacing(SP_S)
 
         self._dot = QLabel("○", self)
         self._dot.setFixedWidth(14)
         self._dot.setAlignment(Qt.AlignCenter)
-        self._dot.setStyleSheet(f"color: #333; font-size: 13px;")
+        self._dot.setStyleSheet(f"color: #333; font-size: {FS_BODY}px;")
 
         self._lbl = QLabel(label, self)
-        self._lbl.setFixedWidth(200)
-        self._lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: 12px;")
+        self._lbl.setFixedWidth(232)   # longest: "Tách nhạc nền (giữ tiếng Trung)"
+        self._lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_BODY}px;")
 
         self._bar = QProgressBar(self)
         self._bar.setRange(0, 100); self._bar.setValue(0)
@@ -1697,14 +1764,14 @@ class StepRow(QWidget):
         )
 
         self._pct = QLabel("", self)
-        self._pct.setFixedWidth(34)
+        self._pct.setFixedWidth(40)
         self._pct.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._pct.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px;")
+        self._pct.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_CAPTION}px;")
 
         self._time = QLabel("", self)
         self._time.setFixedWidth(52)
         self._time.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._time.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px;")
+        self._time.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_CAPTION}px;")
         self._time.setToolTip("Thời gian của bước này")
 
         lay.addWidget(self._dot)
@@ -1718,37 +1785,37 @@ class StepRow(QWidget):
 
     def set_running(self):
         self._dot.setText("◉")
-        self._dot.setStyleSheet(f"color: {_ACCENT}; font-size: 13px;")
-        self._lbl.setStyleSheet(f"color: {_TXT_MAIN}; font-size: 12px;")
+        self._dot.setStyleSheet(f"color: {_ACCENT}; font-size: {FS_BODY}px;")
+        self._lbl.setStyleSheet(f"color: {_TXT_MAIN}; font-size: {FS_BODY}px;")
 
     def set_progress(self, pct: int):
         self._bar.setValue(pct)
         self._pct.setText(f"{pct}%")
-        self._pct.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
+        self._pct.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_CAPTION}px;")
 
     def set_done(self):
         self._dot.setText("✓")
-        self._dot.setStyleSheet(f"color: {_GREEN}; font-size: 13px;")
-        self._lbl.setStyleSheet(f"color: {_TXT_MAIN}; font-size: 12px;")
+        self._dot.setStyleSheet(f"color: {_GREEN}; font-size: {FS_BODY}px;")
+        self._lbl.setStyleSheet(f"color: {_TXT_MAIN}; font-size: {FS_BODY}px;")
         self._bar.setValue(100)
         self._bar.setStyleSheet(
             "QProgressBar { border-radius: 2px; background: #222; }"
             f"QProgressBar::chunk {{ border-radius: 2px; background: {_GREEN}; }}"
         )
         self._pct.setText("100%")
-        self._pct.setStyleSheet(f"color: {_GREEN}; font-size: 11px;")
+        self._pct.setStyleSheet(f"color: {_GREEN}; font-size: {FS_CAPTION}px;")
 
     def reset(self):
         self._dot.setText("○")
-        self._dot.setStyleSheet(f"color: #333; font-size: 13px;")
-        self._lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: 12px;")
+        self._dot.setStyleSheet(f"color: #333; font-size: {FS_BODY}px;")
+        self._lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_BODY}px;")
         self._bar.setValue(0)
         self._bar.setStyleSheet(
             "QProgressBar { border-radius: 2px; background: #222; }"
             f"QProgressBar::chunk {{ border-radius: 2px; background: {_ACCENT}; }}"
         )
         self._pct.setText("")
-        self._pct.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px;")
+        self._pct.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_CAPTION}px;")
         self._time.setText("")
 
 
@@ -1847,8 +1914,8 @@ class MainWindow(QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(10)
+        root.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        root.setSpacing(SP_M)
 
         # ── Header ─────────────────────────────────────────────────────────────
         hdr = QHBoxLayout(); hdr.setSpacing(0)
@@ -1857,11 +1924,11 @@ class MainWindow(QWidget):
         logo.setFixedSize(30, 30)
         title = QLabel(f"Dubber <span style='color:{_BEE};'>Bee</span>", self)
         title.setTextFormat(Qt.RichText)
-        title.setStyleSheet("font-size: 20px; font-weight: 700; color: #fff;"
-                            " letter-spacing: -0.3px; margin-left: 10px;")
+        title.setStyleSheet(f"font-size: {FS_TITLE}px; font-weight: 700; color: #fff;"
+                            f" letter-spacing: -0.3px; margin-left: {SP_S}px;")
         tagline = QLabel("Lồng tiếng Trung → Việt", self)
-        tagline.setStyleSheet(f"color: {_TXT_MID}; font-size: 12px; margin-left: 12px;"
-                              " padding-top: 5px;")
+        tagline.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_BODY}px; margin-left: {SP_M}px;"
+                              " padding-top: 4px;")
         hdr.addWidget(logo)
         hdr.addWidget(title)
         hdr.addWidget(tagline)
@@ -1870,24 +1937,24 @@ class MainWindow(QWidget):
         from dubber.app.settings_dialog import SettingsDialog
         self._settings_dlg = SettingsDialog(self)
         self._btn_groq_chip = QPushButton("Groq  ●", self)
-        self._btn_groq_chip.setFixedHeight(28)
+        self._btn_groq_chip.setFixedHeight(CONTROL_H)
         self._btn_groq_chip.setCursor(Qt.PointingHandCursor)
         self._btn_groq_chip.clicked.connect(self._open_settings)
         self._settings_dlg.groq.lamp_changed.connect(self._on_groq_lamp)
         self._btn_settings = QPushButton("⚙  Cài đặt", self)
-        self._btn_settings.setFixedHeight(28)
+        self._btn_settings.setFixedHeight(CONTROL_H)
         self._btn_settings.setStyleSheet(_SMALL_BTN_STYLE)
         self._btn_settings.setToolTip("Groq API key, thông báo, prompt AI, cache")
         self._btn_settings.clicked.connect(self._open_settings)
         hdr.addWidget(self._btn_groq_chip)
-        hdr.addSpacing(8)
+        hdr.addSpacing(SP_S)
         hdr.addWidget(self._btn_settings)
         self._on_groq_lamp(_TXT_MID, "Groq API key: chưa kiểm tra — bấm để mở Cài đặt")
         root.addLayout(hdr)
 
-        cols = QHBoxLayout(); cols.setSpacing(12)
-        left = QVBoxLayout(); left.setSpacing(10)
-        right = QVBoxLayout(); right.setSpacing(10)
+        cols = QHBoxLayout(); cols.setSpacing(SP_L)
+        left = QVBoxLayout(); left.setSpacing(SP_M)
+        right = QVBoxLayout(); right.setSpacing(SP_M)
         cols.addLayout(left, 1)
         cols.addLayout(right, 1)
         root.addLayout(cols)
@@ -1899,10 +1966,10 @@ class MainWindow(QWidget):
 
         queue_box = QGroupBox("Hàng đợi — chọn video để chỉnh cấu hình riêng", self)
         q_lay = QVBoxLayout(queue_box)
-        q_lay.setContentsMargins(10, 14, 10, 10)
-        q_lay.setSpacing(6)
+        q_lay.setContentsMargins(*GROUP_MARGINS)
+        q_lay.setSpacing(SP_S)
         self._summary = QLabel("", self)
-        self._summary.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
+        self._summary.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_HINT}px;")
         q_lay.addWidget(self._summary)
         self._list = QListWidget(self)
         # Cmd/Shift-click selects several (bulk remove / rerun / apply config); drag a
@@ -1914,7 +1981,7 @@ class MainWindow(QWidget):
         self._list.setSpacing(2)
         self._list.setStyleSheet(
             f"QListWidget {{ background: {_SURFACE}; border: 1px solid {_BORDER};"
-            f" border-radius: 6px; font-size: 12px; color: {_TXT_MAIN}; }}"
+            f" border-radius: 6px; font-size: {FS_BODY}px; color: {_TXT_MAIN}; }}"
             " QListWidget::item { border-radius: 5px; }"
             " QListWidget::item:hover { background: rgba(255, 255, 255, 0.04); }"
             f" QListWidget::item:selected {{ background: rgba(77, 184, 255, 0.20); }}"
@@ -1931,14 +1998,14 @@ class MainWindow(QWidget):
         q_lay.addWidget(self._queue_busy)
         self._probe_runner = TaskRunner(self)
 
-        q_btns = QHBoxLayout(); q_btns.setSpacing(6)
+        q_btns = QHBoxLayout(); q_btns.setSpacing(SP_S)
         self._btn_apply_all = QPushButton("Áp dụng cho tất cả", self)
         self._btn_rerun = QPushButton("↻ Chạy lại", self)
         self._btn_rerun.setToolTip("Đưa video đã xong / lỗi / đã hủy về hàng đợi")
         self._btn_remove = QPushButton("Xóa", self)
         self._btn_clear = QPushButton("Dọn video đã xong", self)
         for b in (self._btn_apply_all, self._btn_rerun, self._btn_remove, self._btn_clear):
-            b.setFixedHeight(28)
+            b.setFixedHeight(CONTROL_H)
             b.setStyleSheet(_SMALL_BTN_STYLE)
         self._btn_apply_all.clicked.connect(self._apply_to_all)
         self._btn_rerun.clicked.connect(self._rerun_selected)
@@ -1983,7 +2050,7 @@ class MainWindow(QWidget):
         self._opts.add_page(self._export, "Xuất video")
 
         self._lbl_editing = QLabel("Thêm video để bắt đầu", self)
-        self._lbl_editing.setStyleSheet(f"color: {_TXT_MID}; font-size: 13px; padding: 2px 2px 6px 2px;")
+        self._lbl_editing.setStyleSheet(f"color: {_TXT_MID}; font-size: {FS_BODY}px; padding: 0 2px;")
         self._lbl_editing.setTextFormat(Qt.RichText)
         right.addWidget(self._lbl_editing)
         right.addWidget(self._opts)
@@ -1991,8 +2058,8 @@ class MainWindow(QWidget):
         # ── Progress section ───────────────────────────────────────────────────
         self._prog_box = QGroupBox("Tiến trình", self)
         prog_lay = QVBoxLayout(self._prog_box)
-        prog_lay.setContentsMargins(10, 14, 10, 10)
-        prog_lay.setSpacing(2)
+        prog_lay.setContentsMargins(*GROUP_MARGINS)
+        prog_lay.setSpacing(SP_XS)
 
         self._rows: dict[str, StepRow] = {}
         for key, label in _STEPS:
@@ -2004,13 +2071,13 @@ class MainWindow(QWidget):
         self._update_separate_label()
 
         # ── Buttons ────────────────────────────────────────────────────────────
-        btns = QHBoxLayout(); btns.setSpacing(8)
+        btns = QHBoxLayout(); btns.setSpacing(SP_S)
         self._btn_start = QPushButton("▶   Chạy hàng đợi", self)
         self._btn_start.setEnabled(False)
-        self._btn_start.setFixedHeight(36)
+        self._btn_start.setFixedHeight(PRIMARY_H)
         self._btn_start.setStyleSheet(
             f"QPushButton {{ background: {_ACCENT}; color: #000; font-weight: bold;"
-            " border-radius: 6px; font-size: 13px; letter-spacing: 0.3px; }"
+            f" border-radius: 6px; font-size: {FS_BODY}px; letter-spacing: 0.3px; }}"
             f"QPushButton:hover {{ background: #70c8ff; }}"
             " QPushButton:disabled { background: #1e1e1e; color: #444; }"
         )
@@ -2019,7 +2086,7 @@ class MainWindow(QWidget):
 
         self._btn_stop = QPushButton("⏹  Dừng sau video này", self)
         self._btn_stop.setEnabled(False)
-        self._btn_stop.setFixedHeight(36)
+        self._btn_stop.setFixedHeight(PRIMARY_H)
         self._btn_stop.setStyleSheet(_SMALL_BTN_STYLE)
         self._btn_stop.clicked.connect(self._request_stop)
         btns.addWidget(self._btn_stop, 2)
@@ -2028,17 +2095,17 @@ class MainWindow(QWidget):
         self._btn_cancel.setToolTip("Dừng ngay video đang chạy, xóa file tạm của video đó"
                                     " và dừng hàng đợi")
         self._btn_cancel.setEnabled(False)
-        self._btn_cancel.setFixedHeight(36)
+        self._btn_cancel.setFixedHeight(PRIMARY_H)
         self._btn_cancel.setStyleSheet(_SMALL_BTN_STYLE)
         self._btn_cancel.clicked.connect(self._cancel_current)
         btns.addWidget(self._btn_cancel, 2)
 
         self._btn_open = QPushButton("📂  Mở thư mục kết quả", self)
         self._btn_open.setEnabled(False)
-        self._btn_open.setFixedHeight(36)
+        self._btn_open.setFixedHeight(PRIMARY_H)
         self._btn_open.setStyleSheet(
             f"QPushButton {{ background: {_SURFACE}; color: {_TXT_MID};"
-            f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: 13px; }}"
+            f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: {FS_BODY}px; }}"
             f"QPushButton:hover {{ background: #2a2a2a; color: {_TXT_MAIN}; }}"
             " QPushButton:disabled { background: #161616; color: #333; border-color: #1e1e1e; }"
         )
@@ -2049,7 +2116,7 @@ class MainWindow(QWidget):
         # ── Status ─────────────────────────────────────────────────────────────
         self._status = QLabel("", self)
         self._status.setWordWrap(True)
-        self._status.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px;")
+        self._status.setStyleSheet(f"color: {_TXT_DIM}; font-size: {FS_HINT}px;")
         root.addWidget(self._status)
 
         self._refresh_buttons()
@@ -2064,7 +2131,8 @@ class MainWindow(QWidget):
         self._btn_groq_chip.setToolTip(tip)
         self._btn_groq_chip.setStyleSheet(
             f"QPushButton {{ background: #1e1e1e; color: {color}; border: 1px solid #333;"
-            f" border-radius: 14px; padding: 0 12px; font-size: 12px; font-weight: 600; }}"
+            f" border-radius: {CONTROL_H // 2}px; padding: 0 {SP_M}px; font-size: {FS_BODY}px;"
+            " font-weight: 600; }"
             f"QPushButton:hover {{ background: #2a2a2a; }}")
 
     def _update_separate_label(self, *_):
@@ -2087,10 +2155,10 @@ class MainWindow(QWidget):
 
         self._rows["Separate"]._lbl.setText(lbl)
         self._rows["Separate"]._lbl.setStyleSheet(
-            f"color: {'#333' if not will_run else _TXT_DIM}; font-size: 12px;"
+            f"color: {'#333' if not will_run else _TXT_DIM}; font-size: {FS_BODY}px;"
         )
         self._rows["Separate"]._dot.setStyleSheet(
-            f"color: {'#222' if not will_run else '#444'}; font-size: 13px;"
+            f"color: {'#222' if not will_run else '#444'}; font-size: {FS_BODY}px;"
         )
 
     # ── Queue management ───────────────────────────────────────────────────────
@@ -2534,7 +2602,7 @@ class MainWindow(QWidget):
         self._refresh_summary()
 
     def _set_status(self, text: str, color: str):
-        self._status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._status.setStyleSheet(f"color: {color}; font-size: {FS_HINT}px;")
         self._status.setText(text)
 
     def _edit_layout(self, mode: str):
@@ -2887,8 +2955,8 @@ def run_gui() -> None:
     from PySide6.QtGui import QIcon
     big = _LOGO_DIR / "logo_1024.png"   # not shipped in the Windows bundle (it has icon.ico)
     app.setWindowIcon(QIcon(str(big if big.exists() else _LOGO_DIR / "logo_256.png")))
-    register_qt_fonts()
     app.setStyle("Fusion")
+    apply_ui_font(app)   # after setStyle: it resets the per-class fonts to the system font
 
     pal = QPalette()
     pal.setColor(QPalette.Window,          QColor(_DARK_BG))

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from dubber.core.utils import api_keys
+from dubber.app.theme import FS_HINT, SP_L, SP_M
 
 _GREEN = "#4caf50"
 _RED = "#f44336"
@@ -21,6 +22,8 @@ class GroqKeyDialog(QDialog):
         self._task = None
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
         intro = QLabel(
             "Groq cho chất lượng dịch Trung → Việt tốt nhất (cần Internet, gói miễn phí có giới hạn).<br>"
             "Lấy API key tại <a href='https://console.groq.com/keys'>console.groq.com/keys</a> "
@@ -54,7 +57,7 @@ class GroqKeyDialog(QDialog):
         note = QLabel("Key được lưu trong Keychain (Windows: Credential Manager), không nằm trong "
                       "file nào của Dubber Bee và không ghi vào log.", self)
         note.setWordWrap(True)
-        note.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+        note.setStyleSheet(f"color: {_DIM}; font-size: {FS_HINT}px;")
         lay.addWidget(note)
 
         btns = QHBoxLayout()

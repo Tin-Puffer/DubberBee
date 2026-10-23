@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QWidget
+from dubber.app.theme import FS_HINT, SP_S
 
 
 class Task(QObject):
@@ -121,13 +122,13 @@ class BusyBar(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(8)
+        lay.setSpacing(SP_S)
         self._bar = QProgressBar(self)
         self._bar.setTextVisible(False)
         self._bar.setFixedHeight(6)
         self._bar.setFixedWidth(140)
         self._label = QLabel("", self)
-        self._label.setStyleSheet("color: #8ab4f8; font-size: 11px;")
+        self._label.setStyleSheet(f"color: #8ab4f8; font-size: {FS_HINT}px;")
         lay.addWidget(self._bar)
         lay.addWidget(self._label, 1)
         self.hide()

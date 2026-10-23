@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from dubber.core.translate import prompts
+from dubber.app.theme import FS_BODY, SP_L, SP_M
 
 TITLES = {
     "review": "Prompt sửa bản dịch",
@@ -31,6 +32,8 @@ class PromptDialog(QDialog):
         self.setWindowTitle(TITLES[kind])
         self.resize(760, 620)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(SP_L, SP_L, SP_L, SP_L)
+        lay.setSpacing(SP_M)
 
         info = QLabel(HELP[kind], self)
         info.setWordWrap(True)
@@ -40,7 +43,7 @@ class PromptDialog(QDialog):
 
         self.edit = QPlainTextEdit(self)
         mono = QFontDatabase.systemFont(QFontDatabase.FixedFont)   # Menlo / Consolas
-        mono.setPointSize(12)
+        mono.setPixelSize(FS_BODY)
         self.edit.setFont(mono)
         self.edit.setPlainText(prompts.get_prompt(kind))
         self.edit.textChanged.connect(self._refresh)

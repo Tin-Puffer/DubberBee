@@ -66,9 +66,10 @@ python -m dubber
 ```
 dubber/
 ├── __main__.py              # entry point
-├── assets/                  # fonts/ (phụ đề), logo/ (logo.svg → logo_*.png, icon.icns, icon.ico)
+├── assets/                  # fonts/ (phụ đề), ui-fonts/ (FZ Poppins cho giao diện), logo/ (logo.svg → logo_*.png, icon.icns, icon.ico)
 ├── app/
 │   ├── gui.py               # PySide6 GUI, PipelineWorker thread
+│   ├── theme.py             # cỡ chữ (11/12/13/20px), lưới khoảng cách 4px, chiều cao ô — mọi UI dùng chung
 │   ├── tasks.py             # TaskRunner + BusyBar: việc chậm chạy nền, có thanh loading
 │   ├── review_dialog.py     # duyệt/sửa bản dịch trước TTS, copy cho AI / dán kết quả AI
 │   ├── queue_card.py        # thẻ video trong hàng đợi (trạng thái + nút theo trạng thái)
