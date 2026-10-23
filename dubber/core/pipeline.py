@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from dubber.core.video.fonts import fonts_dir, scaled_font_px
+from dubber.core.video.fonts import fonts_dir
 
 from dubber.core.audio.extract import AudioExtractor
 from dubber.core.utils.job_cache import file_digest, sig_matches, write_sig
@@ -260,6 +260,11 @@ class Pipeline:
         sub_pos: "tuple | None" = None,
         sub_font: str = "Arial",
         sub_size: int = 48,
+        sub_color: str = "#FFFFFF",
+        sub_outline_color: str = "#000000",
+        sub_outline: float = 2.0,
+        sub_box: bool = False,
+        blur_pad: int = 12,
         translator: str = "auto",
         show_subtitles: bool = True,
         voice: str | None = None,
@@ -308,11 +313,8 @@ class Pipeline:
         # ── Subtitle layout ────────────────────────────────────────────────────
         w, h = video_info.width, video_info.height
 
-        from dubber.core.video.subtitles import SubtitleStyle
-        # margin_v: pixels from bottom edge. 2% keeps sub sát đáy like reference.
-        margin_v = max(10, int(h * 0.02))
-        sub_center = _norm_point_to_px(sub_pos, w, h)
-        sub_style = SubtitleStyle(font_name=sub_font, font_size=sub_size, margin_v=margin_v, pos=sub_center)
+        sub_style = make_sub_style(w, h, sub_font, sub_size, sub_pos, sub_color,
+                                   sub_outline_color, sub_outline, sub_box)
 
         subs_ass = self.job_dir / "subs.ass"
         if show_subtitles:
@@ -331,8 +333,8 @@ class Pipeline:
             )
             log.info("Subtitles: disabled")
 
-        # Blur: off / auto (box behind each Vietnamese subtitle) / custom fixed area
-        font_size_pt = sub_size
+        # Blur: off / auto (box around the Vietnamese subtitle line, whole video) /
+        # custom fixed area
         if blur_region is False:
             blur_mode = "off"
         custom_px = _norm_rect_to_px(blur_rect, w, h) if blur_mode == "custom" else None
@@ -341,12 +343,13 @@ class Pipeline:
         elif custom_px:
             # Fixed area for the whole video (covers burned-in Chinese subs at any time)
             active_blur_band = [(0.0, video_info.duration + 1.0, *custom_px)]
-        elif show_subtitles:
-            active_blur_band = _compute_sub_blurs(
-                subs_ass, w, h, margin_v, font_size_pt, center=sub_center,
-            )
         else:
-            active_blur_band = None
+            layout_ass = subs_ass
+            if not show_subtitles:   # still cover the Chinese subs where ours would be
+                layout_ass = self.job_dir / "subs_layout.ass"
+                build_ass(fitted, w, h, layout_ass, style=sub_style)
+            box = compute_auto_blur(_ass_texts(layout_ass), w, h, sub_style, blur_pad)
+            active_blur_band = [(0.0, video_info.duration + 1.0, *box)] if box else None
 
         # ── Background audio track ────────────────────────────────────────────
         background_wav: Path | None = None
@@ -484,6 +487,7 @@ class Pipeline:
         if cached and translator != "manual":   # manual: the user decides (may upload a fix)
             log.info("Reusing cached translation (same ASR + translator %s)", translator)
             shutil.copyfile(stored, translate_json)
+            _normalize_translate_json(translate_json)   # saved before M10 → clean it now
             write_sig(translate_json, sig)
             return asr_json, translate_json
 
@@ -494,6 +498,7 @@ class Pipeline:
             results = self._manual_translation(asr_segments, cached)
             if results is None:   # "reuse the previous manual translation"
                 shutil.copyfile(stored, translate_json)
+                _normalize_translate_json(translate_json)
                 write_sig(translate_json, sig)
                 return asr_json, translate_json
         else:
@@ -505,6 +510,16 @@ class Pipeline:
             log.info("=== M2 translate start  %d segments  backend=%s ===",
                      len(asr_segments), backend.__class__.__name__)
             results = backend.translate(translate_segs)
+
+        # Clean-up after any translator: spacing, capitals, no dangling commas; proper
+        # names as Groq spelled them (other translators don't report names)
+        from dubber.core.translate.base import TranslateResult
+        from dubber.core.translate.normalize_vi import normalize_text
+        names = getattr(backend, "names", None) if translator != "manual" else None
+        names = names if isinstance(names, dict) else None
+        src = {i: s.text for i, s in enumerate(asr_segments)}
+        results = [TranslateResult(id=r.id, vi=normalize_text(r.vi, src.get(r.id, ""), names))
+                   for r in results]
 
         write_translate_json(asr_segments, results, translate_json)
         write_sig(translate_json, sig)
@@ -627,6 +642,21 @@ def _resolve_translator(backend: str):
         raise ValueError(f"Unknown translator backend: {backend!r}.")
 
 
+def _normalize_translate_json(path: Path) -> None:
+    """Apply normalize_text to every vi_text in translate.json (no-op when already clean)."""
+    import json
+    from dubber.core.translate.normalize_vi import normalize_text
+    data = json.loads(path.read_text(encoding="utf-8"))
+    changed = False
+    for d in data:
+        vi = d.get("vi_text") or ""
+        clean = normalize_text(vi, d.get("src_text", ""))
+        if clean != vi:
+            d["vi_text"], changed = clean, True
+    if changed:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _translate_json_is_valid(path: Path) -> bool:
     """True if translate.json exists and has at least one non-empty vi_text."""
     import json
@@ -693,64 +723,55 @@ def _norm_rect_to_px(rect: "tuple | None", w: int, h: int) -> "tuple[int, int, i
     return (x, y, bw, bh)
 
 
-def _compute_sub_blurs(
-    ass_path: Path,
-    video_w: int,
-    video_h: int,
-    margin_v: int,
-    font_size_pt: int,
-    pad_h: int = 4,
-    pad_top: int = 6,
-    pad_bot: int = 8,
-    center: "tuple[int, int] | None" = None,
-) -> list:
-    """Return list of (start_sec, end_sec, x, y, w, h) blur boxes — one per subtitle.
+def make_sub_style(w: int, h: int, font: str, size: int, sub_pos=None,
+                   color: str = "#FFFFFF", outline_color: str = "#000000",
+                   outline: float = 2.0, box: bool = False):
+    """SubtitleStyle for a w×h video from the GUI options (colors as #RRGGBB)."""
+    from dubber.core.video.subtitles import SubtitleStyle, hex_to_ass
+    return SubtitleStyle(
+        font_name=font, font_size=size,
+        margin_v=max(10, int(h * 0.02)),   # 2% keeps the line close to the bottom
+        pos=_norm_point_to_px(sub_pos, w, h),
+        primary_color=hex_to_ass(color), outline_color=hex_to_ass(outline_color),
+        outline=float(outline), box=box,
+    )
 
-    center: subtitle text center in px (custom position); None → bottom-center.
-    """
+
+def _ass_texts(ass_path: Path) -> list[str]:
+    """Visible text of every Dialogue line (override tags removed)."""
     import re
-
-    scaled_font = scaled_font_px(font_size_pt, video_h)
-    char_w = scaled_font * 0.62      # approximate character advance for Vietnamese
-    line_h = scaled_font * 1.40
-
-    def _to_sec(t: str) -> float:
-        h, m, rest = t.split(":")
-        s, cs = rest.split(".")
-        return int(h) * 3600 + int(m) * 60 + int(s) + int(cs) / 100
-
-    boxes = []
+    out = []
     for line in ass_path.read_text(encoding="utf-8-sig").splitlines():
-        if not line.startswith("Dialogue:"):
-            continue
-        parts = line.split(",", 9)
-        if len(parts) < 10:
-            continue
-        try:
-            start_t = _to_sec(parts[1].strip())
-            end_t   = _to_sec(parts[2].strip())
-        except ValueError:
-            continue
-        text = parts[9]
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) == 10:
+                out.append(re.sub(r"\{[^}]*\}", "", parts[9]))
+    return out
 
-        # Count lines and estimate longest visible line length (strip ASS override tags)
-        clean = re.sub(r'\{[^}]*\}', '', text)
-        lines = clean.replace(r'\N', '\n').replace(r'\n', '\n').split('\n')
-        num_lines = max(1, len(lines))
-        longest   = max((len(l) for l in lines), default=1)
 
-        box_w = min(video_w, int(longest * char_w) + 2 * pad_h)
-        box_h = int(num_lines * line_h) + pad_top + pad_bot
-        if center:
-            box_x = min(max(0, center[0] - box_w // 2), video_w - box_w)
-            box_y = min(max(0, center[1] - box_h // 2), max(0, video_h - box_h))
-        else:
-            box_x = max(0, (video_w - box_w) // 2)
-            box_y = max(0, video_h - margin_v + pad_bot - box_h)
+def compute_auto_blur(texts: list[str], video_w: int, video_h: int, style,
+                      pad: int = 12) -> "tuple[int, int, int, int] | None":
+    """(x, y, w, h) of the automatic blur box: the widest subtitle line + *pad* on every side.
 
-        boxes.append((start_t, end_t, box_x, box_y, box_w, box_h))
-
-    return boxes
+    One fixed box for the whole video — it covers burned-in Chinese subtitles even between
+    our lines, and one crop/blur/overlay keeps the render fast. pad is px on a 1080p frame.
+    Even values keep crop/overlay aligned with YUV 4:2:0 chroma.
+    """
+    from dubber.core.video.subtitles import cue_size_px
+    if not texts:
+        return None
+    pad_px = round(pad * video_h / 1080)
+    tw = max(cue_size_px(t, style, video_h)[0] for t in texts)
+    th = cue_size_px("Ag", style, video_h)[1]
+    bw = min(video_w, round(tw) + 2 * pad_px) & ~1
+    bh = min(video_h, round(th) + 2 * pad_px) & ~1
+    if style.pos:
+        cx, cy = style.pos
+    else:   # bottom-center: the line's bottom sits margin_v above the frame edge
+        cx, cy = video_w // 2, video_h - style.margin_v - th / 2
+    x = min(max(0, round(cx - bw / 2)), video_w - bw) & ~1
+    y = min(max(0, round(cy - bh / 2)), video_h - bh) & ~1
+    return (x, y, bw, bh)
 
 
 def _parse_sub_windows(ass_path: Path) -> list:

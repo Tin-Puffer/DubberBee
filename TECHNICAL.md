@@ -161,7 +161,17 @@ một câu đúng thứ tự (cho phép tiền tố "1." / "1)" / "[1]"; UTF-8 /
 - Phụ đề ASS theo thời điểm giọng Việt thật trong `dub.wav` (`fit.json`), font nhúng sẵn
   (Arial, Be Vietnam Pro, Roboto, Montserrat, Nunito, Lexend, Noto Sans), cỡ 20–120 px theo
   khung 1080p.
-- Làm mờ: tự động sau từng dòng phụ đề Việt, hoặc một vùng cố định cả video.
+- Sau dịch, `translate/normalize_vi.py` chuẩn hóa mọi bản dịch (khoảng trắng, viết hoa, bỏ dấu
+  phẩy cuối; tên riêng theo danh sách `names` Groq trả về). Chạy lại nhiều lần vẫn cho cùng kết quả.
+- Mỗi phụ đề là **một dòng** (`WrapStyle: 2`): `subtitles._split_to_chunks` cắt câu theo điểm phạt
+  (dấu câu, từ nối, không kết thúc bằng từ yếu, không cắt trong từ — tách từ bằng `pyvi`), đo độ
+  rộng thật bằng `video/text_metrics.py` (Pillow + bảng OS/2 của font, khớp libass) và tối đa
+  `MAX_CUE_CHARS` ký tự. Chữ có viền (`BorderStyle 1`), màu chữ/viền/độ dày chọn trong GUI; tùy
+  chọn hộp nền tối là một layer `Box` riêng.
+- Che phụ đề gốc: tắt / tự động (`pipeline.compute_auto_blur`: dòng rộng nhất + lề, một vùng cố
+  định cả video) / thủ công (vùng tự kéo).
+- GUI: việc chậm (ffprobe, dựng khung xem trước, đọc/cắt audio clone, kiểm tra file dịch) chạy
+  qua `app/tasks.py` (`TaskRunner` + `BusyBar`), không chặn luồng giao diện.
 - Âm thanh: giọng Việt + nhạc nền + tiếng Trung. Hai mức bằng nhau → dùng thẳng âm gốc; khác
   nhau → tách MDX-Net và trộn riêng; chuẩn hóa `loudnorm I=-16`.
 - Xuất video: độ phân giải, FPS, CRF, preset, bitrate audio đều là tham số của

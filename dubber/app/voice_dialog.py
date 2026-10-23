@@ -7,12 +7,13 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, QThread, QUrl, Signal
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QVBoxLayout,
 )
 
+from dubber.app.tasks import BusyBar, TaskRunner
 from dubber.core.tts import voice_library as vl
 from dubber.core.utils.ffmpeg_locator import find_ffprobe, no_window
 
@@ -36,22 +37,6 @@ def probe_duration(path: Path) -> float:
         return 0.0
 
 
-class _Task(QObject):
-    """Runs fn() in a QThread; done/failed are delivered on the GUI thread."""
-    done = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, fn: Callable[[], object]):
-        super().__init__()
-        self._fn = fn
-
-    def run(self):
-        try:
-            self.done.emit(self._fn())
-        except Exception as exc:   # shown in the dialog
-            self.failed.emit(str(exc))
-
-
 class CloneVoiceDialog(QDialog):
     """On accept, ``self.entry`` is the new VoiceEntry."""
 
@@ -63,7 +48,8 @@ class CloneVoiceDialog(QDialog):
         self._src: Optional[Path] = None
         self._duration = 0.0
         self._tmp = tempfile.TemporaryDirectory(prefix="dubber-clone-")
-        self._threads: list = []
+        self._runner = TaskRunner(self)
+        self._busy = False
         self._player = None
 
         lay = QVBoxLayout(self)
@@ -73,7 +59,7 @@ class CloneVoiceDialog(QDialog):
         self._edit_file = QLineEdit(self)
         self._edit_file.setReadOnly(True)
         self._edit_file.setPlaceholderText("Chọn file ghi âm hoặc video…")
-        btn_browse = QPushButton("Chọn…", self)
+        self._btn_browse = btn_browse = QPushButton("Chọn…", self)
         btn_browse.clicked.connect(self._browse)
         row = QHBoxLayout(); row.addWidget(self._edit_file, 1); row.addWidget(btn_browse)
         form.addRow("File", row)
@@ -103,6 +89,8 @@ class CloneVoiceDialog(QDialog):
         btns.addWidget(self._btn_listen); btns.addWidget(self._btn_try); btns.addStretch(1)
         lay.addLayout(btns)
 
+        self._busy_bar = BusyBar(self)
+        lay.addWidget(self._busy_bar)
         self._lbl_status = QLabel("", self)
         self._lbl_status.setWordWrap(True)
         lay.addWidget(self._lbl_status)
@@ -131,8 +119,17 @@ class CloneVoiceDialog(QDialog):
 
     def set_source(self, path: Path) -> None:
         self._src = path
+        self._duration = 0.0
         self._edit_file.setText(path.name)
-        self._duration = probe_duration(path)
+        self._lbl_dur.setText("…")
+        self._status("")
+        self._run(lambda: probe_duration(path), lambda d: self._source_read(d, path),
+                  "Đang đọc file âm thanh…")
+
+    def _source_read(self, duration: float, path: Path) -> None:
+        if path != self._src:          # another file was picked meanwhile
+            return
+        self._duration = duration
         self._lbl_dur.setText(f"{self._duration:.1f} s" if self._duration else "không đọc được")
         long_clip = self._duration > vl.MAX_REF_S
         self._spin_start.setEnabled(long_clip)
@@ -146,30 +143,29 @@ class CloneVoiceDialog(QDialog):
             self._edit_name.setText(path.stem[:40])
         self._refresh()
 
-    def _cut(self) -> Path:
-        ref = Path(self._tmp.name) / f"ref_{self._spin_start.value():.2f}.wav"
-        if not ref.exists():
-            vl.prepare_reference(self._src, ref, self._spin_start.value())
-        return ref
+    def _cutter(self):
+        """A function (safe on a worker thread) that cuts the reference clip → its path."""
+        src, start, tmp = self._src, self._spin_start.value(), Path(self._tmp.name)
+
+        def cut() -> Path:
+            ref = tmp / f"ref_{start:.2f}.wav"
+            if not ref.exists():
+                vl.prepare_reference(src, ref, start)
+            return ref
+        return cut
 
     # ── Listen / try ──────────────────────────────────────────────────────────
 
     def _listen(self):
-        try:
-            self._play(self._cut())
-        except Exception as exc:
-            self._status(str(exc), _RED)
+        self._run(self._cutter(), self._play, "Đang cắt đoạn mẫu…")
 
     def _try_voice(self):
-        try:
-            ref = self._cut()
-        except Exception as exc:
-            self._status(str(exc), _RED)
-            return
-        out = Path(self._tmp.name) / f"try_{ref.stem}.wav"
+        cut = self._cutter()
 
         def work():
             from dubber.core.tts.vieneu_tts import sdk_lock, shared_vieneu, write_wav
+            ref = cut()
+            out = Path(self._tmp.name) / f"try_{ref.stem}.wav"
             sdk = shared_vieneu()
             with sdk_lock:
                 emb, codes = sdk.encode_reference(str(ref))
@@ -177,8 +173,8 @@ class CloneVoiceDialog(QDialog):
             write_wav(out, audio, sdk.sample_rate)
             return out
 
-        self._status("Đang tạo giọng đọc thử… (lần đầu có thể mất một lúc để tải model)")
-        self._run(work, self._play)
+        self._run(work, self._play,
+                  "Đang tạo giọng đọc thử… (lần đầu có thể mất một lúc để tải model)")
 
     def _play(self, path: Path):
         try:
@@ -211,41 +207,36 @@ class CloneVoiceDialog(QDialog):
             self.entry = entry
             self.accept()
 
-        self._status("Đang lưu giọng…")
-        self._run(work, done)
+        self._run(work, done, "Đang lưu giọng… (tách đặc trưng giọng, có thể mất vài chục giây)")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _run(self, fn, on_done):
-        self._set_busy(True)
-        self._on_task_done = on_done
-        thread, task = QThread(self), _Task(fn)
-        task.moveToThread(thread)
-        thread.started.connect(task.run)
-        # Bound methods of this dialog → Qt queues the calls onto the GUI thread
-        # (a plain function or lambda would run on the worker thread).
-        task.done.connect(self._task_done)
-        task.failed.connect(self._task_failed)
-        task.done.connect(thread.quit)
-        task.failed.connect(thread.quit)
-        self._threads.append((thread, task))
-        thread.start()
+    def _run(self, fn, on_done, busy_text: str):
+        """fn() on a worker thread with the busy bar; on_done(result) back on the GUI thread."""
+        self._set_busy(True, busy_text)
 
-    def _task_done(self, result):
-        self._set_busy(False)
-        self._on_task_done(result)
+        def done(result):
+            self._set_busy(False)
+            on_done(result)
 
-    def _task_failed(self, msg: str):
-        self._set_busy(False)
-        self._status(msg, _RED)
+        def failed(msg: str):
+            self._set_busy(False)
+            self._status(msg, _RED)
 
-    def _set_busy(self, busy: bool):
+        self._runner.run(fn, on_done=done, on_fail=failed)
+
+    def _set_busy(self, busy: bool, text: str = ""):
         self._busy = busy
+        if busy:
+            self._busy_bar.start(text)
+        else:
+            self._busy_bar.stop()
         self._refresh()
 
     def _refresh(self):
-        busy = getattr(self, "_busy", False)
+        busy = self._busy
         has_src = self._src is not None and self._duration > 0
+        self._btn_browse.setEnabled(not busy)
         self._btn_listen.setEnabled(has_src and not busy)
         self._btn_try.setEnabled(has_src and not busy)
         self._btn_save.setEnabled(has_src and bool(self._edit_name.text().strip()) and not busy)
@@ -255,13 +246,13 @@ class CloneVoiceDialog(QDialog):
         self._lbl_status.setStyleSheet(f"color: {color}; font-size: 12px;")
 
     def reject(self):
-        if getattr(self, "_busy", False):   # a running thread must finish first
+        if self._busy:   # a running thread must finish first
             self._status("Đang xử lý, vui lòng đợi…", _AMBER)
             return
         super().reject()
 
     def closeEvent(self, event):
-        if getattr(self, "_busy", False):
+        if self._busy:
             event.ignore()
             return
         super().closeEvent(event)
@@ -270,8 +261,6 @@ class CloneVoiceDialog(QDialog):
         if self._player is not None:
             self._player.stop()
         # Only reached when idle (reject is blocked while busy; accept comes from a
-        # finished task), so these threads are just winding down.
-        for thread, _ in list(self._threads):
-            thread.quit()
-            thread.wait(5000)
+        # finished task), so nothing is left running.
+        self._runner.wait_all(5000)
         super().done(result)

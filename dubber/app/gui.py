@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QTabWidget, QFormLayout,
 )
 
+from dubber.app.tasks import BusyBar, TaskRunner
+
 _DARK_BG   = "#111"
 _PANEL_BG  = "#181818"
 _SURFACE   = "#1e1e1e"
@@ -145,6 +147,11 @@ class PipelineWorker(QObject):
         sub_pos: "tuple | None" = None,
         sub_font: str = "Arial",
         sub_size: int = 48,
+        sub_color: str = "#FFFFFF",
+        sub_outline_color: str = "#000000",
+        sub_outline: float = 2.0,
+        sub_box: bool = False,
+        blur_pad: int = 12,
         asr_on_vocals: bool = True,
         tts_engine: str = "piper",
     ) -> None:
@@ -160,6 +167,11 @@ class PipelineWorker(QObject):
         self.tts_engine      = tts_engine
         self.sub_font        = sub_font
         self.sub_size        = sub_size
+        self.sub_color       = sub_color
+        self.sub_outline_color = sub_outline_color
+        self.sub_outline     = sub_outline
+        self.sub_box         = sub_box
+        self.blur_pad        = blur_pad
         self.input_path      = input_path
         self.output_dir      = output_dir
         self.blur_mode       = blur_mode
@@ -204,7 +216,8 @@ class PipelineWorker(QObject):
         keys = ("translator", "tts_engine", "voice", "asr_on_vocals", "trim_start", "trim_end",
                 "vi_volume", "music_volume", "cn_voice_volume", "keep_music", "keep_cn_voice",
                 "show_subtitles", "scale", "fps", "crf", "encoder_preset", "audio_bitrate",
-                "blur_mode", "sub_font", "sub_size", "output_dir")
+                "blur_mode", "blur_pad", "sub_font", "sub_size", "sub_color",
+                "sub_outline_color", "sub_outline", "sub_box", "output_dir")
         return {k: getattr(self, k, None) for k in keys}
 
     def _report_error(self, exc: BaseException) -> None:
@@ -356,6 +369,11 @@ class PipelineWorker(QObject):
                 sub_pos=self.sub_pos,
                 sub_font=self.sub_font,
                 sub_size=self.sub_size,
+                sub_color=self.sub_color,
+                sub_outline_color=self.sub_outline_color,
+                sub_outline=self.sub_outline,
+                sub_box=self.sub_box,
+                blur_pad=self.blur_pad,
                 voice=self.voice,
                 keep_music=self.keep_music,
                 keep_cn_voice=self.keep_cn_voice,
@@ -609,6 +627,17 @@ _HINTS_TRANSLATOR = {
 _HINT_ASR_VOCALS = "Nhận diện chính xác hơn với video có nhạc, chậm hơn một chút"
 _HINT_TRIM = "Chỉ lồng tiếng đoạn đã chọn, chạy nhanh hơn khi thử"
 _HINT_SUBS = "Chèn phụ đề tiếng Việt vào video"
+_HINT_OUTLINE_COLOR = "Viền tối + chữ sáng dễ đọc nhất trên mọi nền"
+_HINT_OUTLINE = "0 = không viền · dày quá trông nặng, lấp nét chữ"
+_HINT_BOX = "Thêm hộp đen mờ sau chữ (kiểu cũ) — dễ đọc nhưng che nhiều hình hơn"
+_HINTS_BLUR = {
+    "off":    "Không che — giữ nguyên hình gốc",
+    "auto":   "Vùng mờ ôm sát dòng phụ đề dài nhất, hiện suốt video",
+    "custom": "Tự kéo vùng che phụ đề Trung trên khung hình",
+}
+_HINT_BLUR_PAD = "Lớn hơn: che kín hơn nhưng che nhiều hình hơn"
+DEFAULT_SUB_COLOR, DEFAULT_OUTLINE_COLOR = "#FFFFFF", "#000000"
+DEFAULT_OUTLINE, DEFAULT_BLUR_PAD = 2, 12
 _HINTS_RES = {None: "Giữ nguyên như video gốc"}
 _HINT_RES_OTHER = "Thấp hơn = file nhỏ hơn, xuất nhanh hơn"
 _HINT_FPS = "Để “Gốc” nếu không cần đổi"
@@ -643,6 +672,36 @@ def _small_button(text: str, parent) -> QPushButton:
     b.setFixedHeight(30)
     b.setStyleSheet(_SMALL_BTN_STYLE)
     return b
+
+
+class _ColorButton(QPushButton):
+    """Shows a color swatch + hex; click → QColorDialog."""
+    changed = Signal(str)
+
+    def __init__(self, color: str, title: str, parent=None):
+        super().__init__(parent)
+        self._title = title
+        self.setFixedSize(120, 30)
+        self.clicked.connect(self._pick)
+        self.set_color(color)
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = QColor(color).name().upper()
+        light = QColor(self._color).lightness() > 140
+        self.setText(self._color)
+        self.setStyleSheet(
+            f"QPushButton {{ background: {self._color}; color: {'#111' if light else '#eee'};"
+            f" border: 1px solid {_BORDER}; border-radius: 5px; font-size: 12px; }}")
+
+    def _pick(self):
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self._color), self, self._title)
+        if c.isValid():
+            self.set_color(c.name())
+            self.changed.emit(self._color)
 
 
 def _select_data(combo: QComboBox, data) -> None:
@@ -687,6 +746,13 @@ class OptionsPanel(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        self._read_only = False
+        self._banner = QLabel("🔒  Video đang xử lý — chỉ xem, không sửa được", self)
+        self._banner.setStyleSheet(
+            f"color: {_AMBER}; font-size: 11px; padding: 4px 8px;"
+            " background: #2a2416; border-radius: 4px;")
+        self._banner.hide()
+        outer.addWidget(self._banner)
         self._tabs = QTabWidget(self)
         self._tabs.setDocumentMode(False)
         outer.addWidget(self._tabs)
@@ -838,22 +904,45 @@ class OptionsPanel(QWidget):
         self._btn_sub.clicked.connect(lambda: self.layout_edit_requested.emit("sub"))
         form.addRow("Vị trí", _hbox(self._combo_sub, self._btn_sub, stretch_first=True))
 
-        self._chk_blur = QCheckBox("Làm mờ nền phụ đề (che phụ đề Trung)", self)
-        self._chk_blur.setChecked(True)
-        form.addRow("Làm mờ", self._chk_blur)
+        self._btn_color = _ColorButton(DEFAULT_SUB_COLOR, "Màu chữ phụ đề", self)
+        form.addRow("Màu chữ", _hbox(self._btn_color, stretch_last=False))
+        self._btn_outline_color = _ColorButton(DEFAULT_OUTLINE_COLOR, "Màu viền chữ", self)
+        form.addRow("Màu viền", _hbox(self._btn_outline_color, stretch_last=False))
+        _add_hint(form, self._btn_outline_color, _HINT_OUTLINE_COLOR)
+        self._spin_outline = QSpinBox(self)
+        self._spin_outline.setRange(0, 8)
+        self._spin_outline.setValue(DEFAULT_OUTLINE)
+        self._spin_outline.setSuffix(" px")
+        self._spin_outline.setFixedWidth(100)
+        form.addRow("Độ dày viền", _hbox(self._spin_outline, stretch_last=False))
+        _add_hint(form, self._spin_outline, _HINT_OUTLINE)
+        self._chk_box = QCheckBox("Hộp nền tối sau chữ", self)
+        form.addRow("Nền chữ", self._chk_box)
+        _add_hint(form, self._chk_box, _HINT_BOX)
+
+        # Cover the original (Chinese) subtitles: one of off / auto / custom
         self._combo_blur = QComboBox(self)
-        self._combo_blur.addItem("Tự động (sau phụ đề Việt)", userData="auto")
-        self._combo_blur.addItem("Vùng tự chọn (cả video)", userData="custom")
+        self._combo_blur.addItem("Tắt", userData="off")
+        self._combo_blur.addItem("Tự động (theo dòng phụ đề Việt, cả video)", userData="auto")
+        self._combo_blur.addItem("Thủ công (vùng tự chọn, cả video)", userData="custom")
+        _select_data(self._combo_blur, "auto")
         self._btn_blur = _small_button("Chọn vùng…", self)
         self._btn_blur.clicked.connect(lambda: self.layout_edit_requested.emit("blur"))
-        form.addRow("Vùng mờ", _hbox(self._combo_blur, self._btn_blur, stretch_first=True))
+        form.addRow("Che sub gốc", _hbox(self._combo_blur, self._btn_blur, stretch_first=True))
+        _add_hint(form, self._combo_blur, _HINTS_BLUR)
+        self._spin_blur_pad = QSpinBox(self)
+        self._spin_blur_pad.setRange(0, 40)
+        self._spin_blur_pad.setValue(DEFAULT_BLUR_PAD)
+        self._spin_blur_pad.setSuffix(" px")
+        self._spin_blur_pad.setFixedWidth(100)
+        form.addRow("Lề vùng mờ", _hbox(self._spin_blur_pad, stretch_last=False))
+        _add_hint(form, self._spin_blur_pad, _HINT_BLUR_PAD)
 
         self._lbl_layout = _hint_label(self)
         form.addRow("", self._lbl_layout)
         _finish_form(form)
         self._tabs.addTab(_scrollable(page_sub), "Phụ đề")
 
-        self._chk_blur.toggled.connect(self._on_layout_changed)
         self._combo_blur.currentIndexChanged.connect(self._on_blur_mode_changed)
         self._combo_sub.currentIndexChanged.connect(self._on_sub_mode_changed)
         self._on_layout_changed()
@@ -864,37 +953,39 @@ class OptionsPanel(QWidget):
 
     # ── Layout (blur / subtitle position) ─────────────────────────────────────
 
+    def _editable(self) -> bool:
+        return self.isEnabled() and not self._read_only
+
     def _on_blur_mode_changed(self, *_):
-        if self._combo_blur.currentData() == "custom" and not self._blur_rect and self.isEnabled():
+        if self._combo_blur.currentData() == "custom" and not self._blur_rect and self._editable():
             self.layout_edit_requested.emit("blur")
         self._on_layout_changed()
 
     def _on_sub_mode_changed(self, *_):
-        if self._combo_sub.currentData() == "custom" and not self._sub_pos and self.isEnabled():
+        if self._combo_sub.currentData() == "custom" and not self._sub_pos and self._editable():
             self.layout_edit_requested.emit("sub")
         self._on_layout_changed()
 
     def _on_layout_changed(self, *_):
-        blur_on = self._chk_blur.isChecked()
-        self._combo_blur.setEnabled(blur_on)
-        custom_blur = blur_on and self._combo_blur.currentData() == "custom"
-        self._btn_blur.setEnabled(custom_blur)
+        mode = self._combo_blur.currentData()
+        self._btn_blur.setEnabled(mode == "custom")
+        self._spin_blur_pad.setEnabled(mode == "auto")
         self._btn_sub.setEnabled(self._combo_sub.currentData() == "custom")
         parts = []
-        if not blur_on:
-            parts.append("Không làm mờ")
-        elif custom_blur:
+        if mode == "custom":
             parts.append("Vùng mờ: " + ("đã chọn" if self._blur_rect else "⚠ chưa chọn → dùng tự động"))
         if self._combo_sub.currentData() == "custom":
             parts.append("Phụ đề: " + ("đã chọn vị trí" if self._sub_pos else "⚠ chưa chọn → mặc định"))
         self._lbl_layout.setText("  ·  ".join(parts))
 
-    def set_layout(self, blur_rect, sub_pos) -> None:
+    def set_layout(self, blur_rect, sub_pos, blur_mode: "str | None" = None) -> None:
         """Store results from the frame editor (normalized coords)."""
         self._blur_rect = tuple(blur_rect) if blur_rect else None
         self._sub_pos = tuple(sub_pos) if sub_pos else None
-        if self._blur_rect:
-            _select_data(self._combo_blur, "custom")
+        if blur_mode:
+            self._combo_blur.blockSignals(True)
+            _select_data(self._combo_blur, blur_mode)
+            self._combo_blur.blockSignals(False)
         if self._sub_pos:
             _select_data(self._combo_sub, "custom")
         self._on_layout_changed()
@@ -902,12 +993,32 @@ class OptionsPanel(QWidget):
     def layout_state(self) -> tuple:
         return self._blur_rect, self._sub_pos
 
+    def blur_mode(self) -> str:
+        return self._combo_blur.currentData()
+
+    def sub_style(self) -> dict:
+        """Look of the subtitle text + auto blur margin (for the preview dialog)."""
+        return {"color": self._btn_color.color(), "outline_color": self._btn_outline_color.color(),
+                "outline": self._spin_outline.value(), "box": self._chk_box.isChecked(),
+                "blur_pad": self._spin_blur_pad.value()}
+
     def sub_font(self) -> tuple[str, int]:
         return self._combo_font.currentData(), self._spin_size.value()
 
     def set_sub_font(self, family: str, size: int) -> None:
         _select_data(self._combo_font, family)
         self._spin_size.setValue(size)
+
+    def set_read_only(self, read_only: bool) -> None:
+        """While a video is being processed: its settings can be looked at (tabs still
+        switch) but not changed."""
+        from PySide6.QtWidgets import QScrollArea
+        self._read_only = read_only
+        self._banner.setVisible(read_only)
+        for i in range(self._tabs.count()):
+            page = self._tabs.widget(i)
+            inner = page.widget() if isinstance(page, QScrollArea) else page
+            inner.setEnabled(not read_only)   # the scroll bar stays usable
 
     # ── Internal slots ────────────────────────────────────────────────────────
 
@@ -1128,7 +1239,7 @@ class OptionsPanel(QWidget):
 
     def _play_demo(self):
         """Read a sample sentence with the selected voice (cached after the first time)."""
-        from dubber.app.voice_dialog import _Task
+        from dubber.app.tasks import Task as _Task
         from dubber.core.tts.demo import make_demo
         engine, voice = self.tts_engine(), self._combo_voice.currentData()
         if voice in (None, self._CLONE_NEW) or self._demo_task is not None:
@@ -1212,13 +1323,17 @@ class OptionsPanel(QWidget):
             "trim_on": self._chk_trim.isChecked(),
             "trim_start": self._trim.trim()[0],
             "trim_end": self._trim.trim()[1] or 0.0,   # 0 = until the end
-            "blur_on": self._chk_blur.isChecked(),
             "blur_mode": self._combo_blur.currentData(),
             "blur_rect": self._blur_rect,
+            "blur_pad": self._spin_blur_pad.value(),
             "sub_mode": self._combo_sub.currentData(),
             "sub_pos": self._sub_pos,
             "sub_font": self._combo_font.currentData(),
             "sub_size": self._spin_size.value(),
+            "sub_color": self._btn_color.color(),
+            "sub_outline_color": self._btn_outline_color.color(),
+            "sub_outline": self._spin_outline.value(),
+            "sub_box": self._chk_box.isChecked(),
         }
 
     def set_config(self, cfg: dict) -> None:
@@ -1245,12 +1360,16 @@ class OptionsPanel(QWidget):
         self._blur_rect = cfg.get("blur_rect")
         self._sub_pos = cfg.get("sub_pos")
         self._combo_blur.blockSignals(True); self._combo_sub.blockSignals(True)
-        self._chk_blur.setChecked(cfg.get("blur_on", True))
-        _select_data(self._combo_blur, cfg.get("blur_mode", "auto"))
+        _select_data(self._combo_blur, _blur_mode_of(cfg))
         _select_data(self._combo_sub, cfg.get("sub_mode", "default"))
         from dubber.core.video.fonts import DEFAULT_FONT, DEFAULT_FONT_SIZE
         _select_data(self._combo_font, cfg.get("sub_font", DEFAULT_FONT))
         self._spin_size.setValue(cfg.get("sub_size", DEFAULT_FONT_SIZE))
+        self._spin_blur_pad.setValue(cfg.get("blur_pad", DEFAULT_BLUR_PAD))
+        self._btn_color.set_color(cfg.get("sub_color", DEFAULT_SUB_COLOR))
+        self._btn_outline_color.set_color(cfg.get("sub_outline_color", DEFAULT_OUTLINE_COLOR))
+        self._spin_outline.setValue(cfg.get("sub_outline", DEFAULT_OUTLINE))
+        self._chk_box.setChecked(cfg.get("sub_box", False))
         self._combo_blur.blockSignals(False); self._combo_sub.blockSignals(False)
         self._on_layout_changed()
 
@@ -1384,12 +1503,14 @@ class VideoInfoPanel(QGroupBox):
             self._val[key] = v
         grid.setColumnStretch(1, 1)
 
-    def show_info(self, info, error: str = "") -> None:
+    def show_info(self, info, error: str = "", loading: bool = False) -> None:
         if error or info is None:
             for v in self._val.values():
                 v.setText("—")
             if error:
                 self._val["res"].setText(f"Không đọc được: {error}")
+            elif loading:
+                self._val["res"].setText("⏳ Đang đọc thông tin video…")
             return
         rot = f" · xoay {info.rotation}°" if info.rotation else ""
         self._val["res"].setText(f"{info.width} × {info.height}  ({info.aspect}){rot}")
@@ -1624,21 +1745,31 @@ _STEPS = [
 ]
 
 
-def _layout_kwargs(o: dict) -> dict:
-    """Per-video config → run_m5 blur/subtitle-position arguments."""
+def _blur_mode_of(o: dict) -> str:
+    """off / auto / custom from a per-video config (before M10: a separate blur_on box)."""
     if not o.get("blur_on", True):
-        blur_mode = "off"
-    elif o.get("blur_mode") == "custom" and o.get("blur_rect"):
-        blur_mode = "custom"
-    else:
+        return "off"
+    mode = o.get("blur_mode", "auto")
+    return mode if mode in ("off", "auto", "custom") else "auto"
+
+
+def _layout_kwargs(o: dict) -> dict:
+    """Per-video config → run_m5 blur/subtitle layout + style arguments."""
+    blur_mode = _blur_mode_of(o)
+    if blur_mode == "custom" and not o.get("blur_rect"):
         blur_mode = "auto"
     from dubber.core.video.fonts import DEFAULT_FONT, DEFAULT_FONT_SIZE
     return {
         "blur_mode": blur_mode,
         "blur_rect": o.get("blur_rect") if blur_mode == "custom" else None,
+        "blur_pad": o.get("blur_pad", DEFAULT_BLUR_PAD),
         "sub_pos": o.get("sub_pos") if o.get("sub_mode") == "custom" else None,
         "sub_font": o.get("sub_font", DEFAULT_FONT),
         "sub_size": o.get("sub_size", DEFAULT_FONT_SIZE),
+        "sub_color": o.get("sub_color", DEFAULT_SUB_COLOR),
+        "sub_outline_color": o.get("sub_outline_color", DEFAULT_OUTLINE_COLOR),
+        "sub_outline": o.get("sub_outline", DEFAULT_OUTLINE),
+        "sub_box": o.get("sub_box", False),
     }
 
 
@@ -1658,11 +1789,15 @@ class _Job:
         self.error = ""
         self.report_text = ""     # full error report (pop-up)
         self.report_path = ""
-        self.info = None          # VideoInfo, probed on first selection
+        self.info = None          # VideoInfo, probed in the background after adding
         self.info_error = ""
 
+    def probed(self) -> bool:
+        return self.info is not None or bool(self.info_error)
+
     def label(self) -> str:
-        return f"{self._ICON[self.status]}   {self.path.name}"
+        reading = "   — đang đọc…" if not self.probed() and self.status == _Job.PENDING else ""
+        return f"{self._ICON[self.status]}   {self.path.name}{reading}"
 
 
 class MainWindow(QWidget):
@@ -1730,6 +1865,10 @@ class MainWindow(QWidget):
         self._list.currentRowChanged.connect(self._on_select)
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
         q_lay.addWidget(self._list, 1)
+        # Reading video info (ffprobe) runs in the background, one file at a time
+        self._queue_busy = BusyBar(self)
+        q_lay.addWidget(self._queue_busy)
+        self._probe_runner = TaskRunner(self)
 
         q_btns = QHBoxLayout(); q_btns.setSpacing(6)
         self._btn_apply_all = QPushButton("Áp dụng cấu hình này cho tất cả", self)
@@ -1894,6 +2033,7 @@ class MainWindow(QWidget):
             self._list.addItem(QListWidgetItem(self._jobs[-1].label()))
             known[p.resolve()] = self._jobs[-1]
             added += 1
+        self._probe_next()
         if added and self._sel < 0:
             self._list.setCurrentRow(0)
         skipped = len(paths) - added - requeued
@@ -1927,23 +2067,47 @@ class MainWindow(QWidget):
             elif job.status == _Job.ERROR:
                 self._set_status(f"✗  {job.path.name}: {job.error}", _RED)
         else:
-            self._opts.setEnabled(True)
-            self._export.setEnabled(True)
+            self._opts.set_read_only(False)
             self._info.show_info(None)
             self._export.set_source(None)
             self._lbl_editing.setText("Cấu hình mặc định cho video sẽ thêm")
         self._refresh_buttons()
 
     def _show_source_info(self, job: "_Job") -> None:
-        if job.info is None and not job.info_error:
-            from dubber.core.video.info import probe_info
-            try:
-                job.info = probe_info(job.path)
-            except Exception as exc:  # unreadable / missing file
-                job.info_error = str(exc)[:120]
-        self._info.show_info(job.info, job.info_error)
+        # Not probed yet → the background probe fills the panels in when it gets there
+        self._info.show_info(job.info, job.info_error, loading=not job.probed())
         self._export.set_source(job.info)
         self._opts.set_trim_limit(job.info.duration if job.info else 0.0)
+        if not job.probed():
+            self._probe_next()
+
+    def _probe_next(self) -> None:
+        """Read the next unprobed video's info on a worker thread (ffprobe can take seconds
+        on network / USB drives); the queue shows a busy bar until all are read."""
+        if self._probe_runner.busy() or getattr(self, "_closing", False):
+            return
+        todo = [j for j in self._jobs if not j.probed()]
+        if not todo:
+            self._queue_busy.stop()
+            return
+        # the selected video first, so its panels fill in soonest
+        sel = self._jobs[self._sel] if 0 <= self._sel < len(self._jobs) else None
+        job = sel if sel in todo else todo[0]
+        self._queue_busy.start(f"Đang đọc video: {job.path.name}"
+                               + (f"  (còn {len(todo) - 1})" if len(todo) > 1 else ""))
+        from dubber.core.video.info import probe_info
+        self._probe_runner.run(lambda p=job.path: probe_info(p),
+                               on_done=lambda info, j=job: self._probed(j, info, ""),
+                               on_fail=lambda msg, j=job: self._probed(j, None, msg))
+
+    def _probed(self, job: "_Job", info, error: str) -> None:
+        job.info, job.info_error = info, (error[:120] or ("" if info else "không đọc được"))
+        if job in self._jobs:
+            idx = self._jobs.index(job)
+            self._update_item(idx)
+            if idx == self._sel:
+                self._show_source_info(job)
+        self._probe_next()
 
     def _apply_to_all(self):
         opts, export = self._opts.get_config(), self._export.get_config()
@@ -1981,11 +2145,11 @@ class MainWindow(QWidget):
         self._refresh_buttons()
 
     def _sync_panels(self):
-        """Panels are editable for every video except the one being processed."""
-        editable = not (0 <= self._sel < len(self._jobs)
-                        and self._jobs[self._sel].status == _Job.RUNNING)
-        self._opts.setEnabled(editable)
-        self._export.setEnabled(editable)
+        """Panels are editable for every video except the one being processed — that one
+        is read-only (its tabs can still be browsed)."""
+        running = (0 <= self._sel < len(self._jobs)
+                   and self._jobs[self._sel].status == _Job.RUNNING)
+        self._opts.set_read_only(running)
 
     def _remove_rows(self, rows: list[int]):
         # Block list signals: currentRowChanged mid-removal would commit the panels
@@ -2030,11 +2194,16 @@ class MainWindow(QWidget):
         from dubber.app.layout_dialog import LayoutDialog
         blur_rect, sub_pos = self._opts.layout_state()
         family, size = self._opts.sub_font()
-        blur_mode = "auto" if self._opts._chk_blur.isChecked() else "off"
+        blur_mode = self._opts.blur_mode()
+        if mode == "blur" and blur_mode != "off":
+            blur_mode = "custom"            # "Chọn vùng…" → manual area
+        info = job.info
+        dims = (info.width, info.height, info.duration) if info and info.width else None
         dlg = LayoutDialog(job.path, blur_rect, sub_pos, start_mode=mode,
-                           font_family=family, font_size=size, blur_mode=blur_mode, parent=self)
+                           font_family=family, font_size=size, blur_mode=blur_mode,
+                           style=self._opts.sub_style(), video_info=dims, parent=self)
         if dlg.exec() == QDialog.Accepted:
-            self._opts.set_layout(dlg.blur_rect, dlg.sub_pos)
+            self._opts.set_layout(dlg.blur_rect, dlg.sub_pos, dlg.blur_mode)
             self._opts.set_sub_font(dlg.font_family, dlg.font_size)
             self._commit_selected()
         else:
@@ -2112,8 +2281,7 @@ class MainWindow(QWidget):
         job.status = _Job.RUNNING
         self._update_item(nxt)
         if self._sel == nxt:
-            self._opts.setEnabled(False)
-            self._export.setEnabled(False)
+            self._opts.set_read_only(True)
         total = len(self._jobs)
         self._prog_box.setTitle(f"Tiến trình — video {nxt + 1}/{total}: {job.path.name}")
         self._set_status(f"Đang xử lý {job.path.name}…", _TXT_DIM)
@@ -2222,6 +2390,11 @@ class MainWindow(QWidget):
             subprocess.Popen(["open", "-R", str(target)])
         else:
             subprocess.Popen(["xdg-open", str(target.parent)])
+
+    def closeEvent(self, event):
+        self._closing = True                # don't start reading the next video
+        self._probe_runner.wait_all(3000)   # an ffprobe still reading a video
+        super().closeEvent(event)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

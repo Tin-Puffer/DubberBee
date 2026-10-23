@@ -299,8 +299,18 @@ Kết quả có tên như bình thường (`<tên>_vi.mp4`) nhưng chỉ gồm �
 | **Cỡ chữ** | 20–120 (tính trên khung 1080p, tự co theo độ phân giải video) |
 | **Xem trước trên video…** | Mở khung xem trước đúng như video xuất ra |
 | **Vị trí** | *Mặc định (giữa, sát đáy)* hoặc *Tự chọn trên khung hình* → **Chọn vị trí…** |
-| **Làm mờ nền phụ đề (che phụ đề Trung)** | Làm mờ vùng dưới phụ đề để che chữ Trung có sẵn trong video |
-| **Vùng mờ** | *Tự động (sau phụ đề Việt)* — mờ đúng chỗ và đúng lúc có phụ đề Việt; *Vùng tự chọn (cả video)* → **Chọn vùng…** — một vùng cố định suốt video |
+| **Màu chữ / Màu viền** | Bấm để chọn màu (mặc định chữ trắng, viền đen) |
+| **Độ dày viền** | 0–8 px (0 = không viền) |
+| **Nền chữ** | *Hộp nền tối sau chữ* — thêm hộp đen mờ sau chữ như kiểu cũ |
+| **Che sub gốc** | Chọn **một** trong ba: *Tắt*; *Tự động* — vùng mờ ôm dòng phụ đề Việt dài nhất (cộng **Lề vùng mờ**), hiện suốt video; *Thủ công* → **Chọn vùng…** — tự kéo một vùng cố định suốt video |
+| **Lề vùng mờ** | 0–40 px mỗi phía quanh dòng phụ đề (chỉ cho chế độ *Tự động*) |
+
+Phụ đề luôn hiện **một dòng**: câu dài được cắt thành nhiều dòng nối tiếp, ở chỗ ngắt tự nhiên
+(dấu phẩy, trước "chính là", "nhưng", "để"…), không cắt giữa một từ. Mỗi dòng viết hoa chữ đầu và
+không kết thúc bằng dấu phẩy.
+
+Khi một video đang chạy, cấu hình của nó chỉ xem được (vẫn chuyển tab được); các video khác vẫn
+chọn và sửa bình thường.
 
 ### Khung "Xem trước phụ đề & vùng mờ"
 
@@ -475,8 +485,8 @@ macOS: trong Finder bấm **Cmd + Shift + G**, dán đường dẫn để mở n
 - **Groq** cho bản dịch hay nhất; video dài hay dịch nhiều → có thể gặp giới hạn (§11).
 - Muốn giọng **tự nhiên**: VieNeu-TTS; muốn **nhanh**: Piper. Bấm **▶ Nghe thử** trước khi chọn.
 - Clone giọng: **6–8 giây sạch, một người nói** quan trọng hơn file dài.
-- Video có **phụ đề Trung sẵn** trong hình: bật *Làm mờ nền phụ đề*, đặt phụ đề Việt đè lên
-  vùng chữ Trung (hoặc dùng *Vùng tự chọn* để che cố định).
+- Video có **phụ đề Trung sẵn** trong hình: chọn *Che sub gốc → Tự động* và đặt phụ đề Việt đè lên
+  vùng chữ Trung (tăng *Lề vùng mờ* nếu còn lộ chữ), hoặc dùng *Thủ công* để tự kéo vùng che.
 - Giọng Việt bị lấn: giảm nhạc nền / tiếng Trung, đừng tăng giọng Việt quá 100% (dễ rè).
 
 ---

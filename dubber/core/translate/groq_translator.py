@@ -34,11 +34,12 @@ class SwitchToLocal(Exception):
     """The user chose to translate the rest with MarianMT (rate limit dialog)."""
 
 _SYSTEM_PROMPT = """\
-Bạn là dịch giả chuyên nghiệp dịch phim. Nhận JSON array [{id, zh, max_chars}], trả về JSON array [{id, vi}].
+Bạn là dịch giả chuyên nghiệp dịch phim. Nhận JSON array [{id, zh, max_chars}], trả về JSON array [{id, vi, names}].
 Quy tắc:
 - Dịch tự nhiên như lời thoại, không văn viết.
 - Xưng hô nhất quán trong toàn video.
-- Tên riêng: phiên âm Hán-Việt hoặc giữ nguyên, không đổi giữa chừng.
+- Tên riêng (người, địa danh, tổ chức): phiên âm Hán-Việt hoặc giữ nguyên, viết hoa chữ cái đầu mỗi âm tiết, không đổi giữa chừng. Nếu có "Tên riêng đã dùng" thì viết đúng như vậy.
+- names: danh sách tên riêng xuất hiện trong vi, đúng cách viết đã dùng (không có thì []).
 - Không thêm giải thích, ghi chú hay markdown.
 - Bản dịch tiếng Việt phải ngắn gọn: dưới max_chars ký tự.
 - Chỉ trả về JSON array, không có text khác."""
@@ -80,6 +81,9 @@ class GroqTranslator(Translator):
         # Without it (CLI) the translator just waits and retries on its own.
         self.on_rate_limit = None
         self._done = self._total = 0
+        # Proper names as written in the translation, {lower-case: spelling} — kept the same
+        # across batches and applied by normalize_vi.apply_names
+        self.names: Dict[str, str] = {}
         self._asked = False
         self._limited_since_ask = 0
 
@@ -191,12 +195,14 @@ class GroqTranslator(Translator):
         attempt = 0   # non-rate-limit failures; rate-limit waits don't use up attempts
 
         while pending and attempt < MAX_RETRIES:
-            prompt = _build_prompt(pending, context)
+            prompt = _build_prompt(pending, context, sorted(set(self.names.values())))
             try:
                 raw = self._call_model(current_model, prompt)
                 parsed = _parse_response(raw)
                 valid_ids = {s.id for s in pending}
                 results.update({k: v for k, v in parsed.items() if k in valid_ids})
+                for name in _parse_names(raw):
+                    self.names.setdefault(name.lower(), name)
                 self._asked = False          # a fresh limit later is a new episode
                 self._limited_since_ask = 0
             except Exception as exc:
@@ -241,21 +247,22 @@ class GroqTranslator(Translator):
 
 # ── Pure functions ────────────────────────────────────────────────────────────
 
-def _build_prompt(segments: List[TranslateSegment], context: List[Dict]) -> str:
+def _build_prompt(segments: List[TranslateSegment], context: List[Dict],
+                  names: Optional[List[str]] = None) -> str:
     parts: List[str] = []
     if context:
         parts.append("Context (đã dịch trước):\n" + json.dumps(context, ensure_ascii=False))
+        parts.append("")
+    if names:
+        parts.append("Tên riêng đã dùng: " + ", ".join(names))
         parts.append("")
     payload = [{"id": s.id, "zh": s.zh, "max_chars": s.max_chars} for s in segments]
     parts.append("Dịch các đoạn sau:\n" + json.dumps(payload, ensure_ascii=False))
     return "\n".join(parts)
 
 
-def _parse_response(raw: str) -> Dict[int, str]:
-    """Parse model output → {id: vi_text}.
-
-    Tolerates ```json fences, <think> blocks and prose around the JSON array.
-    """
+def _load_array(raw: str) -> list:
+    """The JSON array in model output; tolerates ```json fences, <think> blocks and prose."""
     text = _FENCE_RE.sub("", _THINK_RE.sub("", raw or "")).strip()
     try:
         data = json.loads(text)
@@ -266,11 +273,32 @@ def _parse_response(raw: str) -> Dict[int, str]:
         data = json.loads(text[start : end + 1])
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON array, got {type(data)}")
+    return data
+
+
+def _parse_response(raw: str) -> Dict[int, str]:
+    """Parse model output → {id: vi_text}."""
     result: Dict[int, str] = {}
-    for item in data:
+    for item in _load_array(raw):
         if isinstance(item, dict) and "id" in item and "vi" in item:
             result[int(item["id"])] = str(item["vi"]).strip()
     return result
+
+
+def _parse_names(raw: str) -> List[str]:
+    """Proper names listed in the items' "names" (only those that start with a capital)."""
+    out: List[str] = []
+    try:
+        data = _load_array(raw)
+    except ValueError:
+        return out
+    for item in data:
+        names = item.get("names") if isinstance(item, dict) else None
+        for n in names if isinstance(names, list) else []:
+            n = " ".join(str(n).split())
+            if n and n[0].isupper() and len(n) <= 40:
+                out.append(n)
+    return out
 
 
 def _retry_after(exc: Exception) -> float:

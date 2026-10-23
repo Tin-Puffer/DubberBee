@@ -41,7 +41,7 @@ transformers_datas, transformers_binaries, transformers_hiddenimports = collect_
 # Separation (audio-separator) + VieNeu-TTS and their data files / native libs
 extra_datas, extra_binaries, extra_hiddenimports = [], [], []
 for _pkg in ('audio_separator', 'torchvision', 'vieneu', 'vieneu_utils', 'sea_g2p', 'librosa', 'soxr',
-             'kaldi_native_fbank', 'keyring'):
+             'kaldi_native_fbank', 'keyring', 'pyvi', 'pycrfsuite', 'sklearn_crfsuite'):
     _d, _b, _h = collect_all(_pkg)
     extra_datas += _d; extra_binaries += _b; extra_hiddenimports += _h
 # keyring finds its OS backends (Keychain / Credential Manager) through entry points
@@ -115,6 +115,10 @@ a = Analysis(
         'transformers', 'transformers.models.marian',
         'transformers.models.nllb', 'tokenizers', 'sentencepiece',
         'torch', 'torch.nn', 'torch.jit', 'torch.utils', 'torch.utils.data',
+        # Subtitles: text measuring (Pillow) + Vietnamese word segmentation (pyvi → CRF
+        # model pickles in pyvi/models, collected above; works without sklearn)
+        'PIL', 'PIL.ImageFont', 'pyvi', 'pyvi.ViTokenizer', 'sklearn_crfsuite', 'pycrfsuite',
+        'tabulate',
         # Other
         'platformdirs', 'soundfile', 'resampy', 'cffi', 'pycparser',
         *sherpa_hiddenimports,

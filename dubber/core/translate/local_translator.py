@@ -215,6 +215,11 @@ class AutoTranslator(Translator):
 
     on_rate_limit = None   # passed on to Groq (GUI: ask continue / MarianMT)
 
+    @property
+    def names(self) -> dict:
+        """Proper names Groq reported (empty when it didn't translate)."""
+        return getattr(self._groq, "names", {}) if self._groq and not self._groq_failed else {}
+
     def __init__(self, local_model: str = MARIAN_MODEL) -> None:
         # Check if offline translation libraries are available
         self._local_available = False

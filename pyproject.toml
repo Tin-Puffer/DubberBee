@@ -22,6 +22,10 @@ dependencies = [
     "PyYAML>=6.0",
     # Groq key saved from the GUI → macOS Keychain / Windows Credential Manager
     "keyring>=25",
+    # Subtitles: measure text with the real font (1-line cues, blur box), Vietnamese
+    # word segmentation so a cue is never cut inside a word
+    "Pillow>=10",
+    "pyvi>=0.1.1",
 ]
 
 [project.optional-dependencies]

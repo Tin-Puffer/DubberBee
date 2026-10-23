@@ -79,7 +79,7 @@ def test_changing_translator_retranslates_only(env):
     _, tj = env.run("local")
     assert env.asr_calls == 1
     assert env.translate_calls == ["groq", "local"]
-    assert "local-0" in tj.read_text(encoding="utf-8")
+    assert "Local-0." in tj.read_text(encoding="utf-8")   # normalized: capital, full stop
 
 
 def test_changing_vad_reruns_asr_and_translation(env):
@@ -139,7 +139,7 @@ def test_switching_translators_back_reuses_each_translation(env):
     env.run("local")
     _, tj = env.run("groq")                          # back to Groq: no new request
     assert env.translate_calls == ["groq", "local"]
-    assert "groq-0" in tj.read_text(encoding="utf-8")   # translate.json is Groq's again
+    assert "Groq-0." in tj.read_text(encoding="utf-8")   # translate.json is Groq's again
     env.run("local")
     assert env.translate_calls == ["groq", "local"]
     assert env.asr_calls == 1

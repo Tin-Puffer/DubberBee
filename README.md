@@ -31,10 +31,15 @@ By hand:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"                       # GUI, ASR (+FSMN-VAD), Piper TTS, Groq
+pip install -e ".[dev]"                       # GUI, ASR (+FSMN-VAD), Piper TTS, Groq, subtitles (Pillow, pyvi)
 pip install -e ".[dev,offline,vieneu]"        # + offline translation, music separation, VieNeu-TTS
 python spike/download_models.py               # add --vieneu to fetch VieNeu now (else on first use)
 ```
+
+Core packages include `Pillow` (measures subtitle text with the real font, so every subtitle
+fits on one line and the automatic blur box hugs it) and `pyvi` (Vietnamese word segmentation,
+so a subtitle line is never cut inside a word); both are bundled by `dubber.spec`. An existing
+venv picks them up with `pip install -e ".[dev,offline,vieneu]"` again.
 
 Extras: `separation` (audio-separator / MDX-Net: cleaner background mix and ASR on
 the voice only), `offline` (torch + transformers for MarianMT / NLLB 1.3B, includes

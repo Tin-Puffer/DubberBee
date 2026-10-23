@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout,
 )
 
+from dubber.app.tasks import BusyBar, TaskRunner
+
 _RED = "#f44336"
 _DIM = "#888"
 
@@ -43,6 +45,8 @@ class ManualTranslateDialog(QDialog):
         self.setMinimumWidth(520)
         self.answer = None
         self._script = Path(script)
+        self._count = count
+        self._runner = TaskRunner(self)
 
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel(f"Đã xuất file tiếng Trung (<b>{count} câu</b>, mỗi dòng một câu):",
@@ -65,35 +69,71 @@ class ManualTranslateDialog(QDialog):
         how.setWordWrap(True)
         lay.addWidget(how)
 
+        self._err = QLabel("", self)
+        self._err.setWordWrap(True)
+        self._err.setStyleSheet(f"color: {_RED};")
+        self._err.setVisible(bool(error))
         if error:
-            err = QLabel(f"File vừa chọn chưa dùng được: {error}", self)
-            err.setWordWrap(True)
-            err.setStyleSheet(f"color: {_RED};")
-            lay.addWidget(err)
+            self._err.setText(f"File vừa chọn chưa dùng được: {error}")
+        lay.addWidget(self._err)
+        self._busy = BusyBar(self)
+        lay.addWidget(self._busy)
 
         btns = QHBoxLayout()
-        btn_cancel = QPushButton("Hủy video này", self)
-        btn_cancel.clicked.connect(self.reject)
-        btns.addWidget(btn_cancel)
+        self._btn_cancel = QPushButton("Hủy video này", self)
+        self._btn_cancel.clicked.connect(self.reject)
+        btns.addWidget(self._btn_cancel)
         btns.addStretch(1)
+        self._btn_reuse = None
         if can_reuse:
-            btn_reuse = QPushButton("Dùng lại bản dịch trước", self)
-            btn_reuse.setToolTip("Bản tiếng Việt đã tải lên lần trước cho đúng video + đoạn cắt này")
-            btn_reuse.clicked.connect(self._reuse)
-            btns.addWidget(btn_reuse)
-        btn_pick = QPushButton("Chọn file tiếng Việt…", self)
-        btn_pick.setDefault(True)
-        btn_pick.clicked.connect(self._pick)
-        btns.addWidget(btn_pick)
+            self._btn_reuse = QPushButton("Dùng lại bản dịch trước", self)
+            self._btn_reuse.setToolTip("Bản tiếng Việt đã tải lên lần trước cho đúng video + đoạn cắt này")
+            self._btn_reuse.clicked.connect(self._reuse)
+            btns.addWidget(self._btn_reuse)
+        self._btn_pick = QPushButton("Chọn file tiếng Việt…", self)
+        self._btn_pick.setDefault(True)
+        self._btn_pick.clicked.connect(self._pick)
+        btns.addWidget(self._btn_pick)
         lay.addLayout(btns)
 
     def _pick(self):
         f, _ = QFileDialog.getOpenFileName(
             self, "Chọn file tiếng Việt (.txt)", str(self._script.parent),
             "Văn bản (*.txt);;Tất cả (*)")
-        if f:
-            self.answer = Path(f)
-            self.accept()
+        if not f:
+            return
+        # Check the file here (worker thread) so a wrong one is reported in place
+        from dubber.core.translate.manual import parse_vietnamese
+        path, count = Path(f), self._count
+        self._set_busy(True)
+        self._err.hide()
+        self._runner.run(lambda: parse_vietnamese(path, count),
+                         on_done=lambda _lines: self._picked(path),
+                         on_fail=self._pick_failed)
+
+    def _picked(self, path: Path):
+        self._set_busy(False)
+        self.answer = path
+        self.accept()
+
+    def _pick_failed(self, msg: str):
+        self._set_busy(False)
+        self._err.setText(f"File vừa chọn chưa dùng được: {msg}")
+        self._err.show()
+
+    def _set_busy(self, busy: bool):
+        if busy:
+            self._busy.start("Đang đọc và kiểm tra file…")
+        else:
+            self._busy.stop()
+        for b in (self._btn_pick, self._btn_cancel, self._btn_reuse):
+            if b is not None:
+                b.setEnabled(not busy)
+
+    def reject(self):
+        if self._runner.busy():   # wait for the file check
+            return
+        super().reject()
 
     def _reuse(self):
         self.answer = "reuse"

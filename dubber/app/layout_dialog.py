@@ -19,14 +19,16 @@ from PySide6.QtWidgets import (
     QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from dubber.app.tasks import BusyBar, TaskRunner
 from dubber.core.utils.ffmpeg_locator import find_ffmpeg, find_ffprobe, no_window
 from dubber.core.video.fonts import (
     DEFAULT_FONT, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, SUBTITLE_FONTS, fonts_dir,
 )
 
-# One subtitle event: no . , ; and ≤ subtitles.MAX_CHUNK_CHARS, otherwise build_ass splits it
-# into consecutive chunks and the preview frame only shows the first one. ~2 lines like real subs.
-SAMPLE_TEXT = "Đây là phụ đề tiếng Việt mẫu để bạn xem cỡ chữ trên khung hình"
+# One subtitle event: no . , ; and ≤ subtitles.MAX_CUE_CHARS, otherwise build_ass splits it
+# into consecutive cues and the preview frame only shows the first one. About as long as
+# the longest real line, so the automatic blur box looks like the export's.
+SAMPLE_TEXT = "Phụ đề tiếng Việt mẫu để xem cỡ chữ và màu viền"
 _BLUR_COLOR = QColor("#ff5c5c")
 _SUB_COLOR = QColor("#4db8ff")
 
@@ -46,30 +48,29 @@ def probe_video(path: Path) -> tuple[int, int, float]:
 
 
 def render_preview(path: Path, t: float, w: int, h: int, *, font: str, size: int,
-                   sub_pos, blur_mode: str, blur_rect) -> QImage:
+                   sub_pos, blur_mode: str, blur_rect, color: str = "#FFFFFF",
+                   outline_color: str = "#000000", outline: float = 2.0, box: bool = False,
+                   blur_pad: int = 12) -> QImage:
     """One frame at t with the sample subtitle + blur exactly as the export renders them."""
-    from dubber.core.pipeline import _compute_sub_blurs, _norm_point_to_px, _norm_rect_to_px
-    from dubber.core.video.subtitles import SubtitleStyle, build_ass
+    from dubber.core.pipeline import compute_auto_blur, make_sub_style, _norm_rect_to_px
+    from dubber.core.video.subtitles import build_ass
 
-    margin_v = max(10, int(h * 0.02))
-    center = _norm_point_to_px(sub_pos, w, h)
+    style = make_sub_style(w, h, font, size, sub_pos, color, outline_color, outline, box)
     with tempfile.TemporaryDirectory() as d:
         ass = Path(d) / "s.ass"
         seg = SimpleNamespace(vi_text=SAMPLE_TEXT, final_start=0.0, final_end=60.0)
-        build_ass([seg], w, h, ass, style=SubtitleStyle(
-            font_name=font, font_size=size, margin_v=margin_v, pos=center))
+        build_ass([seg], w, h, ass, style=style)
 
-        box = None
+        area = None
         if blur_mode == "custom":
-            box = _norm_rect_to_px(blur_rect, w, h)
-        if blur_mode != "off" and box is None:
-            boxes = _compute_sub_blurs(ass, w, h, margin_v, size, center=center)
-            box = boxes[0][2:] if boxes else None
+            area = _norm_rect_to_px(blur_rect, w, h)
+        if blur_mode != "off" and area is None:
+            area = compute_auto_blur([SAMPLE_TEXT], w, h, style, blur_pad)
 
         esc = lambda p: str(p).replace("\\", "/").replace(":", "\\:")  # noqa: E731
         vf = f"ass='{esc(ass)}':fontsdir='{esc(fonts_dir())}'"
-        if box:
-            bx, by, bw, bh = box
+        if area:
+            bx, by, bw, bh = area
             r = max(3, min(15, bw // 4, bh // 4))  # same radius rule as render_final
             vf = (f"split[a][b];[b]crop={bw}:{bh}:{bx}:{by},boxblur={r}:3[bl];"
                   f"[a][bl]overlay={bx}:{by}," + vf)
@@ -190,12 +191,17 @@ class LayoutDialog(QDialog):
 
     def __init__(self, video_path: Path, blur_rect=None, sub_pos=None, start_mode="blur", parent=None,
                  font_family: str = DEFAULT_FONT, font_size: int = DEFAULT_FONT_SIZE,
-                 blur_mode: str = "auto"):
+                 blur_mode: str = "auto", style: "dict | None" = None,
+                 video_info: "tuple[int, int, float] | None" = None):
         super().__init__(parent)
         self.setWindowTitle(f"Xem trước phụ đề & vùng mờ — {video_path.name}")
         self._path = video_path
-        self._blur_mode = blur_mode
-        self._vw, self._vh, self._duration = probe_video(video_path)
+        self._blur_mode = blur_mode       # off / auto / custom — dragging a box picks custom
+        self._style = dict(style or {})   # color, outline_color, outline, box, blur_pad
+        self._vw, self._vh, self._duration = video_info or probe_video(video_path)
+        self._runner = TaskRunner(self)
+        self._gen = 0          # newest render request; older results are dropped
+        self._rendering = False
 
         lay = QVBoxLayout(self)
         hint = QLabel(
@@ -209,8 +215,10 @@ class LayoutDialog(QDialog):
         self.canvas = FrameCanvas(self._vw, self._vh, self)
         self.canvas.blur_rect = tuple(blur_rect) if blur_rect else None
         self.canvas.sub_pos = tuple(sub_pos) if sub_pos else None
-        self.canvas.changed.connect(self._schedule_render)
+        self.canvas.changed.connect(self._on_canvas_changed)
         lay.addWidget(self.canvas, 1)
+        self._busy = BusyBar(self)
+        lay.addWidget(self._busy)
 
         # Time slider
         row_t = QHBoxLayout()
@@ -301,27 +309,67 @@ class LayoutDialog(QDialog):
     def _schedule_render(self, *_):
         self._timer.start()
 
+    def _on_canvas_changed(self):
+        if self.canvas.mode == "blur" and self.canvas.blur_rect and self._blur_mode != "off":
+            self._blur_mode = "custom"
+        self._schedule_render()
+
     def _effective_blur_mode(self) -> str:
-        if self._blur_mode == "off":
-            return "off"
-        return "custom" if self.canvas.blur_rect else "auto"
+        if self._blur_mode == "custom" and not self.canvas.blur_rect:
+            return "auto"
+        return self._blur_mode
 
     def _render(self):
+        """Render the frame on a worker thread (FFmpeg takes ~0.3–1 s); keep showing the
+        previous frame meanwhile. Only the newest request is drawn."""
         from dubber.core.video.fonts import scaled_font_px
         self._lbl_px.setText(f"= {scaled_font_px(self.font_size, self._vh)} px trên video {self._vw}×{self._vh}")
-        self.canvas.image = render_preview(
-            self._path, self._slider.value() / 10, self._vw, self._vh,
+        if self._rendering:          # one FFmpeg at a time; redo when it finishes
+            self._gen += 1
+            return
+        self._gen += 1
+        gen = self._gen
+        s = self._style
+        args = dict(
             font=self.font_family, size=self.font_size, sub_pos=self.canvas.sub_pos,
             blur_mode=self._effective_blur_mode(), blur_rect=self.canvas.blur_rect,
+            color=s.get("color", "#FFFFFF"), outline_color=s.get("outline_color", "#000000"),
+            outline=s.get("outline", 2.0), box=s.get("box", False), blur_pad=s.get("blur_pad", 12),
         )
-        self.canvas.update()
+        t = self._slider.value() / 10
+        self._rendering = True
+        self._busy.start("Đang dựng khung xem trước…")
+        self._runner.run(lambda: render_preview(self._path, t, self._vw, self._vh, **args),
+                         on_done=lambda img: self._rendered(gen, img),
+                         on_fail=lambda msg: self._rendered(gen, None, msg))
+
+    def _rendered(self, gen: int, image, error: str = ""):
+        self._rendering = False
+        self._busy.stop()
+        if image is not None and not image.isNull():
+            self.canvas.image = image
+            self.canvas.update()
+        elif error:
+            self._lbl_px.setText(f"Không dựng được khung hình: {error[:80]}")
+        if gen != self._gen:          # settings changed while rendering
+            self._render()
+
+    def done(self, result):   # QDialog.done (accept / reject)
+        self._runner.wait_all()
+        super().done(result)
 
     def _reset(self, what: str):
         if what == "blur":
             self.canvas.blur_rect = None
+            if self._blur_mode == "custom":
+                self._blur_mode = "auto"
         else:
             self.canvas.sub_pos = None
         self._schedule_render()
+
+    @property
+    def blur_mode(self) -> str:
+        return self._effective_blur_mode()
 
     @property
     def blur_rect(self):

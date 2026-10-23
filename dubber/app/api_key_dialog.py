@@ -105,7 +105,7 @@ class GroqKeyDialog(QDialog):
     # ── actions ───────────────────────────────────────────────────────────────
 
     def _test(self):
-        from dubber.app.voice_dialog import _Task
+        from dubber.app.tasks import Task as _Task
         value = self.edit.text().strip()
         self._say("Đang kiểm tra với Groq…")
         thread, task = QThread(self), _Task(lambda: api_keys.check_groq(value))

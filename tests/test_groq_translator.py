@@ -42,6 +42,30 @@ def test_parse_empty_raises():
         _parse_response("")
 
 
+def test_parse_names():
+    raw = ('[{"id": 0, "vi": "Ở Bomi", "names": ["Bomi", "tây tạng", " Đa  Cát "]},'
+           ' {"id": 1, "vi": "Chào"}]')
+    assert _parse_response(raw) == {0: "Ở Bomi", 1: "Chào"}
+    assert gt._parse_names(raw) == ["Bomi", "Đa Cát"]      # lower-case "names" are not names
+    assert gt._parse_names("not json") == []
+
+
+def test_names_are_collected_and_sent_with_later_batches():
+    t = GroqTranslator(api_key="test", batch_size=1)
+    prompts = []
+
+    def fake_call(model, prompt):
+        prompts.append(prompt)
+        i = len(prompts) - 1
+        return f'[{{"id": {i}, "vi": "Bomi {i}", "names": ["Bomi"]}}]'
+
+    with patch.object(t, "_call_model", side_effect=fake_call):
+        t.translate(_segs(2))
+    assert t.names == {"bomi": "Bomi"}
+    assert "Tên riêng đã dùng: Bomi" not in prompts[0]
+    assert "Tên riêng đã dùng: Bomi" in prompts[1]
+
+
 # ── retry behaviour ───────────────────────────────────────────────────────────
 
 class _RateLimit(Exception):

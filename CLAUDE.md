@@ -41,9 +41,12 @@ powershell -ExecutionPolicy Bypass -File setup_dev.ps1 -All
   export GROQ_API_KEY="gsk_..."
   export GEMINI_API_KEY="AI..."   # dự phòng
   ```
-- Cài tay: `pip install -e ".[dev]"` (GUI, ASR, TTS, Groq) hoặc `".[dev,offline,vieneu]"`
+- Cài tay: `pip install -e ".[dev]"` (GUI, ASR, TTS, Groq, phụ đề) hoặc `".[dev,offline,vieneu]"`
   (+ dịch offline torch/transformers ~1-2GB, tách nhạc `separation`, VieNeu-TTS),
   rồi `python spike/download_models.py`.
+- Thư viện phụ đề (có trong `dependencies`, `dubber.spec` đóng gói sẵn): `Pillow` (đo độ rộng chữ
+  theo font thật → sub 1 dòng, vùng mờ tự động), `pyvi` (tách từ tiếng Việt → không cắt dòng giữa
+  một từ; chạy không cần sklearn). Venv cũ: chạy lại `pip install -e ".[dev,offline,vieneu]"`.
 
 ---
 
@@ -63,6 +66,7 @@ dubber/
 ├── __main__.py              # entry point
 ├── app/
 │   ├── gui.py               # PySide6 GUI, PipelineWorker thread
+│   ├── tasks.py             # TaskRunner + BusyBar: việc chậm chạy nền, có thanh loading
 │   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
 └── core/
     ├── pipeline.py          # run_m5() — điều phối toàn bộ pipeline
@@ -76,6 +80,7 @@ dubber/
     │   ├── base.py          # interface Translator
     │   ├── groq_translator.py   # Groq API (online)
     │   ├── local_translator.py  # MarianMT / NLLB 1.3B / AutoTranslator
+    │   ├── normalize_vi.py  # chuẩn hóa bản dịch (viết hoa, dấu câu, tên riêng Groq)
     │   └── gemini.py        # Gemini (dự phòng)
     ├── tts/
     │   ├── factory.py       # make_tts_engine("piper" | "vieneu", voice, tts_dir)
@@ -85,6 +90,8 @@ dubber/
     ├── audio/
     │   └── separate.py      # tách nhạc nền (audio-separator hoặc FFmpeg fallback)
     ├── video/
+    │   ├── subtitles.py     # build_ass(): cắt câu thành dòng 1 dòng, viền/màu chữ
+    │   ├── text_metrics.py  # đo chữ như libass (Pillow + bảng OS/2 của font)
     │   └── render.py        # render_final() — ghép video + subtitle + audio (FFmpeg)
     └── utils/
         ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH
@@ -140,7 +147,7 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
 
 ---
 
-## Trạng thái hiện tại (cập nhật 2026-10-22)
+## Trạng thái hiện tại (cập nhật 2026-10-23)
 
 - [x] M1 ASR (sherpa-onnx SenseVoice)
 - [x] M2 Dịch (Groq online + MarianMT/NLLB offline)
@@ -155,6 +162,9 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
 - [x] M9 Tách câu theo mốc từng chữ, FSMN-VAD (Silero dự phòng), ASR trên giọng đã tách nhạc,
       NLLB 1.3B, bộ đọc VieNeu-TTS + thư viện giọng clone, ghi chú cho mọi lựa chọn GUI
       (bản .app đóng gói đủ VieNeu + audio-separator + model, chạy offline: ~3,7GB, zip ~2,1GB)
+- [x] M10 Phụ đề (`docs/plan-m10-subtitle.md`): chuẩn hóa bản dịch, cắt câu đúng ý, sub 1 dòng,
+      che sub gốc Tắt/Tự động/Thủ công, viền + màu chữ; thanh loading khi nạp file, video đang
+      chạy chỉ khóa sửa (vẫn xem được cấu hình)
 
 ---
 

@@ -71,6 +71,8 @@ jobs:
                             "uvr\UVR-MDX-NET-Inst_HQ_5.onnx", "vieneu") {
             if (-not (Test-Path "$m\$need")) { throw "missing in bundle: $need" }
           }
+          # pyvi's word-segmentation model (subtitle line cutting)
+          if (-not (Test-Path "dist\Dubber\_internal\pyvi\models\pyvi3.pkl")) { throw "missing in bundle: pyvi model" }
           $voices = (Get-ChildItem "$m\piper" -Filter *.onnx).Count
           if ($voices -lt 16) { throw "only $voices piper voices bundled" }
           Get-ChildItem $m | ForEach-Object { "{0,-60} {1,8:N0} MB" -f $_.Name, ((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB) }

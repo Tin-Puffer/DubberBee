@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -109,6 +110,74 @@ def test_add_multiple_and_skip_duplicates(win, tmp_path):
     win._add_files([a])
     assert [j.path.name for j in win._jobs] == ["a.mp4", "b.mp4"]
     assert win._list.count() == 2
+
+
+def test_video_info_is_read_in_the_background(win, tmp_path, monkeypatch):
+    import threading
+    import dubber.core.video.info as info_mod
+    gate, seen_threads = threading.Event(), []
+
+    def slow_probe(path):
+        seen_threads.append(threading.current_thread() is threading.main_thread())
+        gate.wait(5)
+        return SimpleNamespace(width=640, height=360, duration=12.0, fps=25.0, rotation=0,
+                               aspect="16:9", size_bytes=1, bitrate_kbps=0, video_codec="h264",
+                               bit_depth=8, video_kbps=0, audio_codec="aac", sample_rate=48000,
+                               channels=2, audio_kbps=0)
+    monkeypatch.setattr(info_mod, "probe_info", slow_probe)
+    a, b = _videos(tmp_path, "a.mp4", "b.mp4")
+    win._add_files([a, b])                      # returns at once, nothing read yet
+    assert "đang đọc" in win._list.item(0).text()
+    assert not win._queue_busy.isHidden()
+    assert "Đang đọc" in win._info._val["res"].text()
+    gate.set()
+    end = time.time() + 10
+    while any(not j.probed() for j in win._jobs) and time.time() < end:
+        QApplication.processEvents(); time.sleep(0.01)
+    assert seen_threads == [False, False]       # ffprobe never ran on the GUI thread
+    assert "đang đọc" not in win._list.item(0).text()
+    assert win._queue_busy.isHidden()
+    assert "640 × 360" in win._info._val["res"].text()
+
+
+def test_running_video_is_read_only_other_videos_editable(win, tmp_path):
+    a, b = _videos(tmp_path, "a.mp4", "b.mp4")
+    win._add_files([a, b])
+    win._jobs[0].status = gui._Job.RUNNING
+    win._running = 0
+    win._list.setCurrentRow(1)
+    win._list.setCurrentRow(0)
+    assert win._opts._read_only and win._opts._tabs.tabBar().isEnabled()
+    assert not win._opts._banner.isHidden()
+    win._list.setCurrentRow(1)
+    assert not win._opts._read_only and win._opts._combo_font.isEnabled()
+    win._jobs[0].status, win._running = gui._Job.PENDING, -1
+
+
+def test_manual_dialog_checks_the_file_before_closing(tmp_path, monkeypatch):
+    from dubber.app.manual_dialog import ManualTranslateDialog
+    QApplication.instance() or QApplication([])
+    script = tmp_path / "zh.txt"; script.write_text("你好\n再见\n", encoding="utf-8")
+    bad = tmp_path / "bad.txt"; bad.write_text("chỉ một dòng\n", encoding="utf-8")
+    good = tmp_path / "good.txt"; good.write_text("Xin chào\nTạm biệt\n", encoding="utf-8")
+    dlg = ManualTranslateDialog("v.mp4", script, 2, can_reuse=False)
+    pick = iter([str(bad), str(good)])
+    import dubber.app.manual_dialog as md
+    monkeypatch.setattr(md.QFileDialog, "getOpenFileName", lambda *a, **k: (next(pick), ""))
+
+    def settle():
+        end = time.time() + 5
+        while dlg._runner.busy() and time.time() < end:
+            QApplication.processEvents(); time.sleep(0.01)
+
+    dlg._pick()
+    assert not dlg._busy.isHidden() and not dlg._btn_pick.isEnabled()
+    settle()
+    assert dlg.result() != gui.QDialog.Accepted and dlg.answer is None
+    assert not dlg._err.isHidden() and dlg._btn_pick.isEnabled()
+    dlg._pick()
+    settle()
+    assert dlg.answer == good
 
 
 def test_each_video_keeps_its_own_config(win, tmp_path):
@@ -491,11 +560,20 @@ def test_clone_dialog_flow(tmp_path, voice_lib, monkeypatch):
             wf.writeframes(b"\1\0" * int(secs * 16000))
         return path
 
+    def settle():   # reading / cutting the file runs on a worker thread
+        end = time.time() + 10
+        while dlg._busy and time.time() < end:
+            QApplication.processEvents(); time.sleep(0.01)
+
     dlg = CloneVoiceDialog()
     dlg.set_source(wav(tmp_path / "short.wav", 2.0))
+    assert dlg._busy and not dlg._busy_bar.isHidden()   # loading bar while ffprobe reads it
+    settle()
+    assert dlg._busy_bar.isHidden()
     assert "quá ngắn" in dlg._lbl_status.text()
     assert not dlg._spin_start.isEnabled()
     dlg.set_source(wav(tmp_path / "long.wav", 12.0))
+    settle()
     assert dlg._spin_start.isEnabled() and dlg._spin_start.maximum() == pytest.approx(11.0, abs=0.1)
     dlg._edit_name.setText("Giọng thử")
     dlg._spin_start.setValue(3.0)
@@ -506,7 +584,7 @@ def test_clone_dialog_flow(tmp_path, voice_lib, monkeypatch):
     assert dlg.entry is not None and dlg.entry.name == "Giọng thử"
     from dubber.core.tts import voice_library as vl
     assert [v.name for v in vl.clone_voices()] == ["Giọng thử"]
-    assert dlg._threads == [] or all(t.isFinished() for t, _ in dlg._threads)
+    assert not dlg._runner.busy()
 
 
 # ── Option hints (one line under each choice, also the tooltip) ───────────────
