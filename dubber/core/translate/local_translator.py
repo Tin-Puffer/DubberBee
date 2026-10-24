@@ -73,6 +73,11 @@ class LocalTranslator(Translator):
     def translate(self, segments: List[TranslateSegment]) -> List[TranslateResult]:
         if not segments:
             return []
+        from dubber.core.utils.gpu import gpu_lock
+        with gpu_lock:   # MPS: never alongside the queue's stems prefetch (utils/gpu.py)
+            return self._translate(segments)
+
+    def _translate(self, segments: List[TranslateSegment]) -> List[TranslateResult]:
         self._load()
 
         import torch
@@ -169,6 +174,11 @@ class NLLBTranslator(Translator):
     def translate(self, segments: List[TranslateSegment]) -> List[TranslateResult]:
         if not segments:
             return []
+        from dubber.core.utils.gpu import gpu_lock
+        with gpu_lock:   # MPS: never alongside the queue's stems prefetch (utils/gpu.py)
+            return self._translate(segments)
+
+    def _translate(self, segments: List[TranslateSegment]) -> List[TranslateResult]:
         self._load()
 
         import torch

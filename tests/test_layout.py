@@ -89,7 +89,7 @@ def app():
 
 
 _STYLE_DEFAULTS = {"sub_color": "#FFFFFF", "sub_outline_color": "#000000", "sub_outline": 2,
-                   "sub_box": False, "blur_pad": 12}
+                   "sub_box": False, "blur_pad": 12, "logo": None}
 
 
 def test_layout_kwargs_mapping():
@@ -157,20 +157,58 @@ def test_running_video_settings_are_read_only_but_tabs_switch(app):
     assert a._combo_font.isEnabled()
 
 
-def test_canvas_drag_sets_blur_rect_and_click_sets_sub(app):
+def _canvas():
     from dubber.app.layout_dialog import FrameCanvas
     c = FrameCanvas(1920, 1080)
     c.resize(960, 540)  # same aspect → frame fills the widget, 0.5 px scale
+    c.sub_size, c.sub_default = (0.5, 0.06), (0.5, 0.95)
     c.show()
-    QTest.mousePress(c, Qt.LeftButton, pos=QPoint(96, 432))
-    QTest.mouseMove(c, QPoint(864, 513))
-    QTest.mouseRelease(c, Qt.LeftButton, pos=QPoint(864, 513))
-    x, y, w, h = c.blur_rect
-    assert (round(x, 2), round(y, 2), round(w, 2), round(h, 2)) == (0.1, 0.8, 0.8, 0.15)
+    return c
 
-    c.mode = "sub"
-    QTest.mouseClick(c, Qt.LeftButton, pos=QPoint(480, 135))
-    assert tuple(round(v, 2) for v in c.sub_pos) == (0.5, 0.25)
+
+def _drag(c, a: QPoint, b: QPoint) -> None:
+    QTest.mousePress(c, Qt.LeftButton, pos=a)
+    QTest.mouseMove(c, b)
+    QTest.mouseRelease(c, Qt.LeftButton, pos=b)
+
+
+def test_dragging_on_empty_frame_draws_a_blur_area(app):
+    c = _canvas()
+    _drag(c, QPoint(96, 54), QPoint(864, 135))
+    x, y, w, h = c.blur_rect
+    assert (round(x, 2), round(y, 2), round(w, 2), round(h, 2)) == (0.1, 0.1, 0.8, 0.15)
+    assert c.blur_enabled
+    QTest.mouseClick(c, Qt.LeftButton, pos=QPoint(480, 300))   # a click draws nothing new
+    assert c.blur_rect == (x, y, w, h)
+
+
+def test_dragging_the_subtitle_line_moves_it(app):
+    c = _canvas()
+    _drag(c, QPoint(480, 513), QPoint(480, 135))     # grab the line (center 0.5, 0.95) …
+    assert tuple(round(v, 2) for v in c.sub_pos) == (0.5, 0.25)   # … and drop it higher
+    assert c.blur_rect is None                        # it didn't draw a blur area
+
+
+def test_blur_area_moves_and_resizes_by_its_corner(app):
+    c = _canvas()
+    c.blur_rect, c.blur_enabled = (0.1, 0.1, 0.4, 0.2), True
+    _drag(c, QPoint(288, 108), QPoint(384, 162))      # middle of the area → +0.1, +0.1
+    assert tuple(round(v, 2) for v in c.blur_rect) == (0.2, 0.2, 0.4, 0.2)
+    _drag(c, QPoint(576, 216), QPoint(672, 270))      # bottom-right corner → bigger
+    assert tuple(round(v, 2) for v in c.blur_rect) == (0.2, 0.2, 0.5, 0.3)
+
+
+def test_hit_priority_logo_over_blur_over_subtitle(app):
+    c = _canvas()
+    c.blur_rect, c.blur_enabled = (0.3, 0.85, 0.4, 0.15), True     # over the subtitle line
+    assert c.hit(QPoint(480, 513))[0] == "sub"        # the line wins inside its own box …
+    assert c.hit(QPoint(300, 470))[0] == "blur"       # … the blur area elsewhere
+    assert c.hit(QPoint(288, 459))[0] == "blur_corner"
+    c.logo_size, c.logo_center, c.logo_aspect = 20.0, (0.5, 0.9), 1.0
+    assert c.hit(QPoint(480, 486))[0] == "logo"       # the logo sits on top of everything
+    c.blur_enabled = False                            # "Tắt" / "Tự động": no area to grab
+    c.logo_size = None
+    assert c.hit(QPoint(300, 470))[0] == "empty"
 
 
 # ── fonts ─────────────────────────────────────────────────────────────────────
@@ -231,3 +269,50 @@ def test_preview_sample_is_one_single_line_subtitle(tmp_path):
     out = build_ass([_seg(SAMPLE_TEXT, 0, 60)], 1920, 1080, tmp_path / "s.ass")
     events = [l for l in out.read_text(encoding="utf-8-sig").splitlines() if l.startswith("Dialogue:")]
     assert len(events) == 1 and r"\N" not in events[0]
+
+
+def test_drawing_an_area_switches_the_editor_to_custom_blur(app, monkeypatch, tmp_path):
+    import dubber.app.layout_dialog as ld
+    from PySide6.QtGui import QImage
+    monkeypatch.setattr(ld, "render_preview", lambda *a, **k: QImage(64, 36, QImage.Format_RGB32))
+    dlg = ld.LayoutDialog(tmp_path / "v.mp4", blur_mode="auto", video_info=(1920, 1080, 10.0))
+    dlg._runner.wait_all()
+    assert dlg.blur_mode == "auto" and not dlg.canvas.blur_enabled
+    dlg.canvas.resize(960, 540)
+    _drag(dlg.canvas, QPoint(96, 54), QPoint(864, 135))
+    assert dlg.blur_mode == "custom" and dlg._combo_blur.currentData() == "custom"
+    dlg._reset("blur")
+    assert dlg.blur_rect is None and dlg.blur_mode == "auto"
+    dlg.reject()
+
+
+def test_subtitle_tab_has_one_editor_button_and_a_position_reset(app):
+    from dubber.app.gui import OptionsPanel
+    a = OptionsPanel()
+    opened = []
+    a.layout_edit_requested.connect(opened.append)
+    a._btn_frame.click()
+    assert opened == ["frame"]
+    assert not a._btn_sub_reset.isEnabled() and "mặc định" in a._lbl_sub_pos.text()
+    a.set_layout(None, (0.5, 0.3))
+    assert a._btn_sub_reset.isEnabled() and a.get_config()["sub_mode"] == "custom"
+    a._btn_sub_reset.click()
+    cfg = a.get_config()
+    assert cfg["sub_mode"] == "default" and cfg["sub_pos"] is None
+
+def test_vietnamese_voice_can_be_turned_off(app):
+    from dubber.app.gui import OptionsPanel
+    a = OptionsPanel()
+    assert a.get_config()["vi_on"] is True and a._sld_vi.isEnabled()
+    a._chk_vi.setChecked(False)
+    cfg = a.get_config()
+    assert cfg["vi_on"] is False and not a._sld_vi.isEnabled()
+    assert "Chỉ phụ đề" in a._hint.text()
+    a._chk_music.setChecked(False); a._chk_cn_voice.setChecked(False)
+    assert "không có tiếng" in a._hint.text()
+    b = OptionsPanel()
+    b.set_config(cfg)
+    assert b.get_config()["vi_on"] is False
+    old = {k: v for k, v in cfg.items() if k != "vi_on"}       # saved before the option
+    b.set_config(old)
+    assert b.get_config()["vi_on"] is True

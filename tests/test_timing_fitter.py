@@ -154,15 +154,25 @@ def test_even_speed_is_the_lowest_that_fits(tmp_path, atempo):
 
 # ── Speed-up ──────────────────────────────────────────────────────────────────
 
-def test_rate_engine_is_topped_up_with_atempo(tmp_path, atempo):
-    """A voice that follows the rate only half-way still ends up at the planned speed."""
+def test_speed_up_is_atempo_without_resynthesis(tmp_path, atempo):
+    """Piper follows its rate only half-way — lines are sped up with atempo alone."""
     segs = [(0.0, 2.0, "Câu dài một chút."), (2.0, 4.0, "Câu sau.")]
     engine = FakeTTSEngine(tmp_path, {"Câu dài một chút.": 4.0, "Câu sau.": 1.0},
                            rate_effect=0.5)
     fitted = run(tmp_path, segs, [4.0, 1.0], video=5.5, engine=engine)
-    assert any(rate and rate != "+0%" for _, rate in engine.calls)
+    assert engine.calls == []
     assert atempo.calls and all(1.0 < a <= MAX_SPEED for a in atempo.calls)
-    assert fitted[0].status in ("sped_up", "late")
+    assert fitted[0].status in ("sped_up", "late") and fitted[0].speed > 1.0
+    assert_no_overlap(fitted)
+
+
+def test_failed_atempo_keeps_normal_speed_without_overlap(tmp_path, monkeypatch):
+    def broken(*a):
+        raise RuntimeError("ffmpeg missing")
+    monkeypatch.setattr(fit_mod, "_apply_atempo", broken)
+    segs = [(0.0, 2.0, "Câu dài một chút."), (2.0, 4.0, "Câu sau.")]
+    fitted = run(tmp_path, segs, [4.0, 1.0], video=10.0)
+    assert fitted[0].speed == 1.0
     assert_no_overlap(fitted)
 
 
@@ -236,3 +246,42 @@ def test_dub_wav_keeps_the_voices_sample_rate(tmp_path, atempo):
     out = build_dub_wav(fitted, 3.0, tmp_path / "dub.wav")
     with wave.open(str(out)) as wf:
         assert wf.getframerate() == SR
+
+
+# ── Loudness ──────────────────────────────────────────────────────────────────
+
+def _db(x):
+    return 20 * np.log10(fit_mod._voiced_rms(x, SR))
+
+
+def _tone(amp, seconds=1.0):
+    t = np.arange(int(seconds * SR)) / SR
+    return (amp * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def test_quiet_and_loud_lines_come_out_at_the_same_level():
+    quiet, loud = _tone(0.12), _tone(0.5)            # ~12 dB apart, both within the gain cap
+    a, b = fit_mod.normalize_speech(quiet, SR), fit_mod.normalize_speech(loud, SR)
+    assert _db(a) == pytest.approx(fit_mod.SPEECH_DBFS, abs=0.5)
+    assert _db(b) == pytest.approx(fit_mod.SPEECH_DBFS, abs=0.5)
+
+
+def test_lifted_peaks_are_limited_below_full_scale():
+    x = _tone(0.05)
+    x[1000:1010] = 0.9                               # a sharp peak, like VieNeu's
+    y = fit_mod.normalize_speech(x, SR)
+    assert np.abs(y).max() < 1.0
+
+
+def test_gain_is_capped_and_silence_left_alone():
+    whisper = _tone(0.03)                            # would need ~+20 dB
+    y = fit_mod.normalize_speech(whisper, SR)
+    assert _db(y) - _db(whisper) == pytest.approx(fit_mod.MAX_GAIN_DB, abs=0.5)
+    silent = np.zeros(SR, dtype=np.float32)
+    assert not fit_mod.normalize_speech(silent, SR).any()
+
+
+def test_fitted_lines_are_loudness_normalized(tmp_path, atempo):
+    fitted = run(tmp_path, [(0.0, 3.0, "Câu.")], [1.0])
+    x, sr, _ = fit_mod._read_pcm(fitted[0].tts_path)
+    assert 20 * np.log10(fit_mod._voiced_rms(x, sr)) == pytest.approx(fit_mod.SPEECH_DBFS, abs=0.5)

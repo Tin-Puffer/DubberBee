@@ -109,7 +109,6 @@ _STEPS = [
     ("ASR",       "ASR  (speech → text)"),
     ("Translate", "Translate (Groq)    "),
     ("TTS",       "TTS  (text → speech)"),
-    ("Mux",       "Mux  (audio mix)    "),
     ("Render",    "Render (encode)     "),
 ]
 
@@ -162,7 +161,6 @@ def _run_with_rich(pipeline, input_path: Path, translator: str, verbose: bool,
         orig_m1 = pipeline.run_m1
         orig_m2 = pipeline.run_m2
         orig_m3 = pipeline.run_m3
-        orig_m4 = pipeline.run_m4
 
         def _m1(path, **kw):
             start("ASR")
@@ -186,16 +184,9 @@ def _run_with_rich(pipeline, input_path: Path, translator: str, verbose: bool,
             done("TTS")
             return result
 
-        def _m4(path, **kw):
-            start("Mux")
-            result = orig_m4(path, **kw)
-            done("Mux")
-            return result
-
         pipeline.run_m1 = _m1
         pipeline.run_m2 = _m2
         pipeline.run_m3 = _m3
-        pipeline.run_m4 = _m4
 
         try:
             asr_json, translate_json, dub_wav, subs_ass, output_mp4 = pipeline.run_m5(
@@ -223,7 +214,7 @@ def _run_with_rich(pipeline, input_path: Path, translator: str, verbose: bool,
 # ── Plain fallback (no rich) ──────────────────────────────────────────────────
 
 def _run_plain(pipeline, input_path: Path, translator: str, run_kw: dict) -> None:
-    STEPS = ["ASR", "Translate", "TTS", "Mux", "Render"]
+    STEPS = ["ASR", "Translate", "TTS", "Render"]
     t0 = time.time()
 
     def tick(step: str, pct: int = 100) -> None:
@@ -236,19 +227,15 @@ def _run_plain(pipeline, input_path: Path, translator: str, run_kw: dict) -> Non
     def on_render(pct: float) -> None:
         tick("Render", int(pct * 100))
 
-    orig_m1, orig_m2, orig_m3, orig_m4 = (
-        pipeline.run_m1, pipeline.run_m2, pipeline.run_m3, pipeline.run_m4
-    )
+    orig_m1, orig_m2, orig_m3 = pipeline.run_m1, pipeline.run_m2, pipeline.run_m3
 
     def _m1(p, **kw): tick("ASR", 0); r = orig_m1(p, **kw); tick("ASR"); return r
     def _m2(p, **kw): tick("Translate", 0); r = orig_m2(p, **kw); tick("Translate"); return r
     def _m3(p, **kw): tick("TTS", 0); r = orig_m3(p, **kw); tick("TTS"); return r
-    def _m4(p, **kw): tick("Mux", 0); r = orig_m4(p, **kw); tick("Mux"); return r
 
     pipeline.run_m1 = _m1
     pipeline.run_m2 = _m2
     pipeline.run_m3 = _m3
-    pipeline.run_m4 = _m4
 
     try:
         asr_json, translate_json, dub_wav, subs_ass, output_mp4 = pipeline.run_m5(

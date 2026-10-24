@@ -74,3 +74,53 @@ def test_audio_mix_does_not_halve_volumes(tmp_path, monkeypatch):
     # amix defaults to normalize=1 (each input × 1/N) — sliders would show 2× the real level
     fc = _filter_for(None, tmp_path, monkeypatch)
     assert "amix=" in fc and "normalize=0" in fc
+
+
+# ── audio tracks: with / without the Vietnamese voice ─────────────────────────
+
+def _cmd_for(tmp_path, monkeypatch, **kw):
+    captured = {}
+
+    def fake_run(cmd, on_progress):
+        captured["cmd"] = cmd
+        Path(cmd[-1]).write_bytes(b"x")
+        return ""
+    monkeypatch.setattr(render, "_detect_hw_encoder", lambda _ff: "libx264")
+    monkeypatch.setattr(render, "_run_ffmpeg_with_progress", fake_run)
+    VideoRenderer(Path("ffmpeg")).render_final(
+        tmp_path / "in.mp4", kw.pop("dub_wav", tmp_path / "dub.wav"), tmp_path / "subs.ass",
+        tmp_path / "out.mp4", **kw)
+    return captured["cmd"]
+
+
+def _inputs(cmd):
+    return [Path(cmd[i + 1]).name for i, a in enumerate(cmd) if a == "-i"]
+
+
+def test_subtitles_only_mixes_just_the_background(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, dub_wav=None, background_wav=tmp_path / "bg.wav",
+                   orig_volume=0.8, logo=(tmp_path / "l.png", 0, 0, 10, 10, 1.0))
+    assert _inputs(cmd) == ["in.mp4", "bg.wav", "l.png"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[1:a]volume=0.8,loudnorm" in fc and "amix" not in fc
+    assert "[2:v]scale=10:10" in fc                          # the logo is input 2 now
+    assert "[aout]" in cmd and "-an" not in cmd
+
+
+def test_subtitles_only_with_original_audio(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, dub_wav=None, orig_volume=1.0)
+    assert _inputs(cmd) == ["in.mp4"]
+    assert "[0:a]volume=1.0,loudnorm" in cmd[cmd.index("-filter_complex") + 1]
+
+
+def test_no_audio_at_all_gives_a_silent_video(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, dub_wav=None, orig_volume=0.0)
+    assert "-an" in cmd and "[aout]" not in cmd
+    assert "loudnorm" not in cmd[cmd.index("-filter_complex") + 1]
+
+
+def test_voice_and_background_are_mixed(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, background_wav=tmp_path / "bg.wav", orig_volume=0.4)
+    assert _inputs(cmd) == ["in.mp4", "dub.wav", "bg.wav"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[2:a]volume=0.4[bg_a];[1:a]volume=1.0[dub_a]" in fc and "amix=inputs=2" in fc

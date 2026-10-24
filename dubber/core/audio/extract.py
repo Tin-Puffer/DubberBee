@@ -84,6 +84,7 @@ class AudioExtractor:
             log.info("Reusing cached stereo audio: %s", output_wav.name)
             return output_wav
         output_wav.parent.mkdir(parents=True, exist_ok=True)
+        part = output_wav.with_name(output_wav.stem + ".part.wav")   # cached ⇒ complete
         cmd = [
             str(self._ffmpeg), "-y",
             "-i", str(video_path),
@@ -91,12 +92,13 @@ class AudioExtractor:
             "-ac", "2",
             "-ar", "44100",
             "-c:a", "pcm_s16le",
-            str(output_wav),
+            str(part),
         ]
         log.info("Extracting stereo audio → %s", output_wav.name)
         result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **no_window())
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg stereo extraction failed:\n{result.stderr[-2000:]}")
+        part.replace(output_wav)
         log.info("Stereo audio: %s  (%.1f MB)", output_wav.name, output_wav.stat().st_size / 1024 / 1024)
         return output_wav
 

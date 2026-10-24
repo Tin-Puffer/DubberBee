@@ -13,7 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import dubber.app.gui as gui  # noqa: E402
-from dubber.app.progress import RunProgress, fmt_clock, fmt_left  # noqa: E402
+from dubber.app.progress import STEP_WEIGHTS, RunProgress, fmt_clock, fmt_left  # noqa: E402
 from dubber.app.queue_card import config_summary, voice_name  # noqa: E402
 
 
@@ -28,15 +28,18 @@ def test_progress_fraction_skips_and_eta():
     c = _Clock()
     p = RunProgress(clock=c)
     assert p.eta() is None
+    w = STEP_WEIGHTS
     p.started("ASR")                      # separation never reported: counted as done
-    assert p.fraction() == pytest.approx(0.25)
+    assert p.fraction() == pytest.approx(w["Separate"])
     c.t = 60
     p.done("ASR")
-    assert p.fraction() == pytest.approx(0.35)
-    assert p.eta() == pytest.approx(60 / 0.35 - 60)
+    done = w["Separate"] + w["ASR"]
+    assert p.fraction() == pytest.approx(done)
+    assert p.eta() == pytest.approx(60 / done - 60)
     assert p.step_elapsed("ASR") == pytest.approx(60)
     p.started("TTS"); p.progress("TTS", 50)
-    assert p.fraction() == pytest.approx(0.25 + 0.10 + 0.10 + 0.175)
+    assert p.fraction() == pytest.approx(done + w["Translate"] + w["TTS"] / 2)
+    assert sum(w.values()) == pytest.approx(1.0) and "Mux" not in w
 
 
 def test_progress_pause_excludes_waiting_on_user():
@@ -162,8 +165,8 @@ def test_running_card_shows_progress_and_time_left(win, tmp_path):
     clock.t = 120
     win._on_done("ASR")
     text = _card(win, 0)._state.text()
-    assert "tổng 35%" in text and "đã chạy 2:00" in text and "còn ~4 phút" in text
-    assert "35%" in win._prog_box.title() and win._rows["ASR"]._time.text() == "2:00"
+    assert "tổng 45%" in text and "đã chạy 2:00" in text and "còn ~2 phút" in text
+    assert "45%" in win._prog_box.title() and win._rows["ASR"]._time.text() == "2:00"
     win._running = -1
     win._jobs[0].status = gui._Job.PENDING
 

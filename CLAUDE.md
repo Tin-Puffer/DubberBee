@@ -103,15 +103,21 @@ dubber/
     │   └── voice_library.py # giọng VieNeu có sẵn + giọng clone (user-data/voices/vieneu)
     ├── audio/
     │   ├── fit.py           # TimingFitter: xếp câu TTS không đè nhau, nghỉ theo dấu câu, cắt im lặng,
+    │   │                    # mọi câu về cùng độ to −14 dBFS (piper/VieNeu lệch ~7 dB) + limiter mềm,
     │   │                    # tăng tốc đều ≤1,15× (1 câu ≤1,3×), trễ ≤1,5s; câu quá dài → Groq rút gọn
     │   ├── mixer.py         # build_dub_wav(): ghép dub.wav đúng sample rate của giọng (không resample)
-    │   └── separate.py      # tách nhạc nền (audio-separator hoặc FFmpeg fallback)
+    │   └── separate.py      # tách nhạc nền (audio-separator, hoặc FFmpeg fallback); chất lượng = overlap
+    │                        # theo từng video (0,1/0,25/0,5 mặc định/0,75), đổi mức chỉ tách lại, giữ ASR/dịch;
+    │                        # hàng đợi tách trước video kế khi video đang chạy đã dịch xong
     ├── video/
     │   ├── subtitles.py     # build_ass(): cắt câu thành dòng 1 dòng, viền/màu chữ
     │   ├── text_metrics.py  # đo chữ như libass (Pillow + bảng OS/2 của font)
-    │   └── render.py        # render_final() — ghép video + subtitle + audio (FFmpeg)
+    │   ├── logo.py          # logo kênh: ảnh chép vào user-data/logos (PNG), cỡ % rộng, góc / tự chọn
+    │   └── render.py        # render_final() — ghép video + subtitle + logo + audio (FFmpeg);
+    │                        # dub_wav=None = chỉ phụ đề (không giọng Việt), không âm thanh nào = -an
     └── utils/
         ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH
+        ├── gpu.py           # gpu_lock: MPS/CoreML chỉ 1 luồng (tách nhạc ↔ dịch offline), 2 luồng = crash Metal
         └── job_cache.py     # chữ ký *.sig.json: chỉ tái dùng asr/translate khi cấu hình khớp
 ```
 

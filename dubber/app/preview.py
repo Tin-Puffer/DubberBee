@@ -52,6 +52,25 @@ def _blur(pix: QPixmap, rect: QRectF) -> None:
     p.end()
 
 
+def _paint_logo(pix: QPixmap, video_w: int, video_h: int, logo: "dict | None") -> None:
+    """The channel logo where the export puts it (same logo_rect math)."""
+    if not logo or not logo.get("path"):
+        return
+    from dubber.core.video.logo import DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE, logo_rect
+    img = QPixmap(str(logo["path"]))
+    if img.isNull():
+        return
+    x, y, w, h = logo_rect(video_w, video_h, img.width(), img.height(),
+                           logo.get("size", DEFAULT_SIZE), logo.get("position", DEFAULT_POSITION),
+                           logo.get("pos"))
+    s = pix.height() / video_h
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    p.setOpacity(logo.get("opacity", DEFAULT_OPACITY) / 100)
+    p.drawPixmap(QRectF(x * s, y * s, w * s, h * s), img, QRectF(img.rect()))
+    p.end()
+
+
 def paint_preview(frame: Path, video_w: int, video_h: int, layout: dict, show_subs: bool,
                   width: int = 320) -> QPixmap:
     """*layout*: the run_m5 blur / subtitle arguments (gui._layout_kwargs)."""
@@ -91,6 +110,7 @@ def paint_preview(frame: Path, video_w: int, video_h: int, layout: dict, show_su
         pad = layout.get("blur_pad", 12) * scale
         _blur(pix, text_rect.adjusted(-pad, -pad, pad, pad))
 
+    _paint_logo(pix, vw, vh, layout.get("logo"))
     if not show_subs:
         return pix
     p = QPainter(pix)

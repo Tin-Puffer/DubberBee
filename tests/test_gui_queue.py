@@ -997,3 +997,98 @@ def test_old_manual_translator_config_runs_as_auto(win, tmp_path):
     win._start()
     _wait_idle(win)
     assert _FakeWorker.runs[0][1]["translator"] == "auto"
+
+
+# ── Separating the next queued video ahead of its turn ────────────────────────
+
+def test_next_video_is_prefetched_once_the_running_one_is_translated(win, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(gui, "_prefetch_stems", lambda path, overlap: seen.append((path, overlap)))
+    a, b, c = _videos(tmp_path, "a.mp4", "b.mp4", "c.mp4")
+    win._add_files([a, b, c])
+    win._running = 0
+    win._jobs[0].status = gui._Job.RUNNING
+    for step in ("Separate", "ASR", "Translate"):
+        win._on_started(step)
+    assert seen == []                               # A may still use the GPU
+    win._on_started("TTS")
+    win._prefetch.join(2)
+    assert seen == [(b, 0.5)]                       # only the next one, at its quality
+    win._on_started("TTS")                          # e.g. a second callback: not again
+    win._prefetch.join(2)
+    assert seen == [(b, 0.5)]
+    win._running, win._jobs[0].status = -1, gui._Job.PENDING
+
+
+def test_no_prefetch_for_trimmed_or_same_file_or_no_separation(win, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(gui, "_prefetch_stems", lambda path, overlap: seen.append((path, overlap)))
+    a, b = _videos(tmp_path, "a.mp4", "b.mp4")
+    win._add_files([a, b])
+    win._running = 0
+    win._jobs[0].status = gui._Job.RUNNING
+    nxt = win._jobs[1]
+    for opts in ({"trim_on": True},
+                 {"asr_vocals": False, "music_on": True, "cn_on": True, "music": 30, "cn": 30}):
+        saved = dict(nxt.opts)
+        nxt.opts.update(opts)
+        win._prefetch_next()
+        nxt.opts.clear(); nxt.opts.update(saved)
+    assert seen == []
+    nxt.path = win._jobs[0].path                   # a duplicate of the running video
+    win._prefetch_next()
+    assert seen == []
+    win._running, win._jobs[0].status = -1, gui._Job.PENDING
+
+
+def test_needs_stems_follows_pipeline_rules():
+    base = {"asr_vocals": False, "music_on": True, "cn_on": True, "music": 40, "cn": 20}
+    assert gui._needs_stems(dict(base, asr_vocals=True))
+    assert gui._needs_stems(base)                              # different volumes
+    assert not gui._needs_stems(dict(base, cn=40))             # same volume: original audio
+    assert not gui._needs_stems(dict(base, music_on=False, cn_on=False))
+    assert gui._needs_stems(dict(base, cn_on=False))           # music only
+
+
+def test_separation_quality_is_per_video_and_reaches_the_worker(win, tmp_path):
+    from dubber.core.audio.separate import DEFAULT_OVERLAP
+    a, b = _videos(tmp_path, "a.mp4", "b.mp4")
+    win._add_files([a, b])
+    assert win._jobs[0].opts["sep_overlap"] == DEFAULT_OVERLAP
+    win._list.setCurrentRow(1)
+    gui._select_data(win._opts._combo_sep, 0.75)
+    win._list.setCurrentRow(0)                      # leaving the row saves its config
+    assert win._jobs[1].opts["sep_overlap"] == 0.75
+    assert win._jobs[0].opts["sep_overlap"] == DEFAULT_OVERLAP
+    win._start()
+    _wait_idle(win)
+    assert [kw["sep_overlap"] for _, kw in _FakeWorker.runs] == [DEFAULT_OVERLAP, 0.75]
+
+
+def test_old_configs_get_the_default_separation_quality():
+    from dubber.core.audio.separate import DEFAULT_OVERLAP
+    assert gui._sep_overlap_of({}) == DEFAULT_OVERLAP
+    assert gui._sep_overlap_of({"sep_overlap": 0.33}) == DEFAULT_OVERLAP   # not a choice
+    assert gui._sep_overlap_of({"sep_overlap": 0.1}) == 0.1
+
+
+def test_logo_of_a_queued_video_becomes_the_remembered_one(tmp_path, monkeypatch):
+    """Logos set before 'last_logo' existed are picked up from the saved queue."""
+    from PIL import Image
+    monkeypatch.setattr(settings, "settings_path", lambda: tmp_path / "settings.json")
+    monkeypatch.setattr(gui, "PipelineWorker", _FakeWorker)
+    QApplication.instance() or QApplication([])
+    img = tmp_path / "l.png"
+    Image.new("RGBA", (20, 10), (255, 0, 0, 255)).save(img)
+    (a,) = _videos(tmp_path, "a.mp4")
+    w = gui.MainWindow()
+    w._add_files([a])
+    w.close()                                               # saves the queue
+    st = settings.load_settings()                           # … as an older version left it
+    st["queue"][0]["opts"].update(logo_on=True, logo_path=str(img), logo_size=15)
+    st.pop("last_logo", None)
+    settings.save_settings(st)
+    w2 = gui.MainWindow()                                   # restart
+    assert settings.load_settings()["last_logo"]["logo_path"] == str(img)
+    assert gui.OptionsPanel().get_config()["logo_size"] == 15   # new videos get it
+    w2.close()

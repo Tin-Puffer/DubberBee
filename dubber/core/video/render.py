@@ -159,7 +159,7 @@ class VideoRenderer:
     def render_final(
         self,
         video_path: Path,
-        dub_wav: Path,
+        dub_wav: "Path | None",
         ass_path: Path,
         output_path: Path,
         orig_volume: float = 0.15,
@@ -174,12 +174,13 @@ class VideoRenderer:
         crf: int = 23,
         encoder_preset: str = "medium",
         audio_bitrate: str = "192k",
+        logo: "tuple | None" = None,
     ) -> Path:
         """M5: burn subtitles + blur band into video, mix audio, re-encode.
 
         Args:
             video_path: Original input video.
-            dub_wav: Vietnamese TTS audio track.
+            dub_wav: Vietnamese TTS audio track (None: subtitles only, no Vietnamese voice).
             ass_path: ASS subtitle file to burn in.
             output_path: Final output path.
             orig_volume: Original audio level (0.0–1.0).
@@ -188,10 +189,27 @@ class VideoRenderer:
                        for Vietnamese subtitle text. Always on for entire duration.
             target_video_kbps: Encode video at this bitrate (0 = use CRF 28 fallback).
             fonts_dir: Directory with bundled fonts for ASS renderer.
+            logo: (image, x, y, w, h, opacity 0–1) — channel logo, under the subtitles.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         encoder = _detect_hw_encoder(self._ffmpeg)
         log.info("Video encoder: %s", encoder)
+
+        # ── Inputs: 0 video, then whichever of dub / background / logo are used ──
+        use_bg = bool(background_wav) and orig_volume > 0
+        inputs = ["-i", str(video_path)]
+        dub_idx = bg_idx = logo_idx = None
+        for path, used in ((dub_wav, bool(dub_wav)), (background_wav, use_bg),
+                           (logo[0] if logo else None, bool(logo))):
+            if used:
+                inputs += ["-i", str(path)]
+        n = 1
+        if dub_wav:
+            dub_idx, n = n, n + 1
+        if use_bg:
+            bg_idx, n = n, n + 1
+        if logo:
+            logo_idx = n
 
         # ── Build filter_complex ──────────────────────────────────────────────
         ass_filter = f"ass='{_esc(ass_path)}'"
@@ -230,6 +248,13 @@ class VideoRenderer:
                 base = out
             current = "[af]"
 
+        if logo:
+            _, lx, ly, lw, lh, opacity = logo
+            vf_parts.append(f"[{logo_idx}:v]scale={lw}:{lh},format=rgba,"
+                            f"colorchannelmixer=aa={opacity:.3f}[logo]")
+            vf_parts.append(f"{current}[logo]overlay={lx}:{ly}[with_logo]")
+            current = "[with_logo]"
+
         _has_post = bool(scale or fps)
         _pre_post = "[after_sub]" if _has_post else "[vout]"
         vf_parts.append(f"{current}{ass_filter}{_pre_post}")
@@ -241,23 +266,25 @@ class VideoRenderer:
             vf_parts.append(f"{_fps_in}fps=fps={fps}[vout]")
         vf = ";".join(vf_parts)
 
-        # Apply vi_volume to dub track; mix with background if present
-        if background_wav and orig_volume > 0:
-            af = (
-                f"[2:a]volume={orig_volume}[bg_a];"
-                f"[1:a]volume={vi_volume}[dub_a];"
-                f"[bg_a][dub_a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-                f"loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
-            )
+        # Audio: background (separated stems, or the original track) + the Vietnamese
+        # dub, whichever are on; nothing on → a silent video. loudnorm resamples to 192 kHz,
+        # which AAC can't take: back to 48 kHz.
+        tracks = []
+        if use_bg:
+            tracks.append(f"[{bg_idx}:a]volume={orig_volume}")
         elif orig_volume > 0:
-            af = (
-                f"[0:a]volume={orig_volume}[orig_a];"
-                f"[1:a]volume={vi_volume}[dub_a];"
-                f"[orig_a][dub_a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-                f"loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
-            )
+            tracks.append(f"[0:a]volume={orig_volume}")
+        if dub_wav:
+            tracks.append(f"[{dub_idx}:a]volume={vi_volume}")
+        norm = "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[aout]"
+        if len(tracks) == 2:
+            af = (f"{tracks[0]}[bg_a];{tracks[1]}[dub_a];"
+                  f"[bg_a][dub_a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+                  + norm)
+        elif tracks:
+            af = f"{tracks[0]}," + norm
         else:
-            af = f"[1:a]volume={vi_volume},loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+            af = None
 
         # ── Build encoder args using CRF-based quality ────────────────────────
         if encoder == "h264_videotoolbox":
@@ -270,18 +297,15 @@ class VideoRenderer:
         else:  # libx264
             enc_args = ["-c:v", "libx264", "-crf", str(crf), "-preset", encoder_preset]
 
-        inputs = ["-i", str(video_path), "-i", str(dub_wav)]
-        if background_wav and orig_volume > 0:
-            inputs += ["-i", str(background_wav)]
-
+        audio_args = (["-map", "[aout]", "-c:a", "aac", "-b:a", audio_bitrate] if af
+                      else ["-an"])
         cmd = [
             str(self._ffmpeg), "-y",
             *inputs,
-            "-filter_complex", vf + ";" + af,
+            "-filter_complex", vf + (";" + af if af else ""),
             "-map", "[vout]",
-            "-map", "[aout]",
             *enc_args,
-            "-c:a", "aac", "-b:a", audio_bitrate,
+            *audio_args,
             "-movflags", "+faststart",
             str(output_path),
         ]

@@ -11,42 +11,80 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from dubber.core.utils.ffmpeg_locator import no_window
+from dubber.core.utils.job_cache import sig_path, write_sig
 
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "UVR-MDX-NET-Inst_HQ_5.onnx"   # MDX-Net ONNX, vocals + instrumental
+# audio-separator's defaults; "overlap" is chosen per video (OVERLAPS)
+MDX_PARAMS = {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1,
+              "enable_denoise": False}
+# Share of each ~6 s chunk that overlaps the next one: more = smoother joins (music stem),
+# slower. Seconds for a 2-min clip on an M1 Pro (CoreML): 0.1 → 20, 0.25 → 27,
+# 0.5 → 33, 0.75 → 62. 0.1 audibly hurt the music; 0.5 is near 0.75 at half the time.
+OVERLAPS = (0.1, 0.25, 0.5, 0.75)
+DEFAULT_OVERLAP = 0.5
+# Stems cached before the overlap was recorded were made with audio-separator's default
+LEGACY_OVERLAP = 0.25
+
+
+_locks: "dict[str, threading.RLock]" = {}
+_locks_guard = threading.Lock()
+
+
+def separation_lock(job_dir: Path) -> threading.RLock:
+    """Lock for one job dir's stereo audio + stems (pipeline run vs queue prefetch)."""
+    key = str(Path(job_dir).resolve())
+    with _locks_guard:
+        return _locks.setdefault(key, threading.RLock())
 
 
 def separate_tracks(
     audio_path: Path,
     output_dir: Path,
     progress_cb=None,
+    overlap: float = DEFAULT_OVERLAP,
 ) -> tuple[Path, Path]:
     """Separate audio into vocals and instrumental.
 
     Returns (vocals_wav, instrumental_wav).
-    Caches results in output_dir — re-runs only if files are missing.
+    Caches results in output_dir — reused only when made with the same model + *overlap*.
     """
     vocals_out       = output_dir / "vocals.wav"
     instrumental_out = output_dir / "instrumental.wav"
 
     fallback_marker = output_dir / ".ffmpeg_fallback"
+    sig = {"model": MODEL_NAME, "overlap": overlap}
 
     if vocals_out.exists() and instrumental_out.exists():
-        # Don't keep reusing poor fallback stems once the real separator is installed
-        if not (fallback_marker.exists() and _mdxnet_available()):
-            log.info("Reusing cached separation: %s, %s", vocals_out.name, instrumental_out.name)
+        if fallback_marker.exists():
+            # Don't keep reusing poor fallback stems once the real separator is installed
+            if not _mdxnet_available():
+                log.info("Reusing cached (FFmpeg fallback) separation")
+                return vocals_out, instrumental_out
+            log.info("Cached separation came from the FFmpeg fallback — redoing with MDX-Net")
+        elif _stems_sig(vocals_out) == sig:
+            log.info("Reusing cached separation: %s, %s (overlap %s)",
+                     vocals_out.name, instrumental_out.name, overlap)
             return vocals_out, instrumental_out
-        log.info("Cached separation came from the FFmpeg fallback — redoing with MDX-Net")
-        vocals_out.unlink(); instrumental_out.unlink(); fallback_marker.unlink()
+        else:
+            log.info("Cached separation was made with other settings — separating again "
+                     "(overlap %s)", overlap)
+        for p in (vocals_out, instrumental_out, fallback_marker, sig_path(vocals_out)):
+            p.unlink(missing_ok=True)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        _separate_mdxnet(audio_path, output_dir, vocals_out, instrumental_out, progress_cb)
+        from dubber.core.utils.gpu import gpu_lock
+        with gpu_lock:   # one GPU user at a time (CoreML / MPS) — see utils/gpu.py
+            _separate_mdxnet(audio_path, output_dir, vocals_out, instrumental_out, progress_cb,
+                             overlap)
+        write_sig(vocals_out, sig)
     except ImportError as exc:
         log.warning(
             "audio-separator not available (%s) — falling back to FFmpeg center-channel "
@@ -56,6 +94,16 @@ def separate_tracks(
         fallback_marker.touch()
 
     return vocals_out, instrumental_out
+
+
+def _stems_sig(vocals: Path) -> dict:
+    """Settings the cached stems were made with (stems from before this was recorded:
+    the model at audio-separator's default overlap)."""
+    import json
+    try:
+        return json.loads(sig_path(vocals).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"model": MODEL_NAME, "overlap": LEGACY_OVERLAP}
 
 
 def separation_method(output_dir: Path) -> str:
@@ -132,6 +180,7 @@ def _separate_mdxnet(
     vocals_out: Path,
     instrumental_out: Path,
     progress_cb=None,
+    overlap: float = DEFAULT_OVERLAP,
 ) -> None:
     import os
     # audio-separator checks for ffmpeg in PATH at init time
@@ -154,6 +203,7 @@ def _separate_mdxnet(
         model_file_dir=str(model_dir),
         output_format="WAV",
         log_level=logging.WARNING,
+        mdx_params={**MDX_PARAMS, "overlap": overlap},
     )
     sep.load_model(MODEL_NAME)
 

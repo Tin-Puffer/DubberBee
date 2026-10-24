@@ -7,21 +7,26 @@ Rules, in order of priority:
   3. A line may start up to MAX_LAG after its Chinese line; the voice catches up again
      at the speaker's next pause.
   4. To stay within that lag the whole video is sped up evenly (≤ MAX_GLOBAL_SPEED) and
-     single lines a bit more (≤ MAX_SPEED in total — applied once, never stacked).
+     single lines a bit more (≤ MAX_SPEED in total), with FFmpeg atempo — piper voices
+     follow their own rate setting only about half-way, so re-synthesizing was wasted work.
   5. Lines that still don't fit are shortened (optional *shortener*, e.g. Groq) and spoken
      again; whatever is left over only delays the following lines.
 
 TTS engines pad every line with silence (piper: ~0.1 s before, ~0.3 s after); it is
-trimmed off so the pauses between lines are the ones chosen here.
+trimmed off so the pauses between lines are the ones chosen here. Every line is also
+brought to the same speech loudness (SPEECH_DBFS): VieNeu speaks ~7 dB quieter than piper,
+so switching voices no longer changes the voice / music balance.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import math
+import os
 import re
 import subprocess
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
@@ -50,7 +55,16 @@ EDGE_PAD = 0.03
 FADE_S = 0.01
 # Frames quieter than this (RMS, 10 ms) are silence when trimming
 SILENCE_RMS = 0.01
+# Speech loudness every line is brought to (RMS of its voiced 10 ms frames). Measured:
+# piper ≈ −11.5 dBFS, VieNeu ≈ −18.6, each within ±1 dB line to line
+SPEECH_DBFS = -14.0
+MAX_GAIN_DB = 12.0
+# Peaks above this are softly limited (never past full scale): VieNeu peaks ~17 dB over
+# its speech level, so a +4.6 dB lift would otherwise clip
+LIMIT_FROM = 0.7
 SHORTEN_ROUNDS = 2
+# Trims / atempo runs at once (FFmpeg processes; numpy releases the GIL)
+WORKERS = min(8, os.cpu_count() or 4)
 
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"”’)\]]*\s*$")
 
@@ -118,16 +132,17 @@ class TimingFitter:
         video_duration: float,
     ) -> list[FittingResult]:
         tts_map = {r.segment_id: r for r in tts_results}
-        lines: list[_Line] = []
+        segs = []
         for seg in sorted(translate_data, key=lambda d: (d["start"], d["id"])):
-            tts = tts_map.get(seg["id"])
-            if tts is None:
-                if seg.get("vi_text"):
-                    log.warning("No TTS result for segment %d — skipping", seg["id"])
-                continue
-            wav, dur = self._trimmed(tts.wav_path)
-            lines.append(_Line(seg["id"], float(seg["start"]), float(seg["end"]),
-                               seg["vi_text"], seg.get("src_text", ""), wav, dur))
+            if seg["id"] in tts_map:
+                segs.append(seg)
+            elif seg.get("vi_text"):
+                log.warning("No TTS result for segment %d — skipping", seg["id"])
+        with ThreadPoolExecutor(WORKERS) as pool:
+            trimmed = list(pool.map(lambda s: self._trimmed(tts_map[s["id"]].wav_path), segs))
+        lines = [_Line(seg["id"], float(seg["start"]), float(seg["end"]), seg["vi_text"],
+                       seg.get("src_text", ""), wav, dur)
+                 for seg, (wav, dur) in zip(segs, trimmed)]
         if not lines:
             return []
 
@@ -185,18 +200,11 @@ class TimingFitter:
     def _render(self, lines: list[_Line], slots: list[_Slot]) -> list[FittingResult]:
         """Make each line's audio at its planned speed, then place lines on the real durations
         (a sped-up line rarely comes out exactly as planned) — still never overlapping."""
+        with ThreadPoolExecutor(WORKERS) as pool:
+            audio = list(pool.map(self._at_speed, lines, [s.speed for s in slots]))
         results: list[FittingResult] = []
         prev_end, prev_line = -math.inf, None
-        for line, slot in zip(lines, slots):
-            wav, dur, speed = line.wav, line.dur, slot.speed
-            if speed > 1.005:
-                try:
-                    wav, dur = self._speed_up(line, speed)
-                except Exception as exc:
-                    log.warning("Speed-up failed for seg %d: %s", line.id, exc)
-                    speed = 1.0
-            else:
-                speed = 1.0
+        for line, (wav, dur, speed) in zip(lines, audio):
             gap = _gap(prev_line)
             start = max(line.start, prev_end + gap)
             if line.shortened:
@@ -214,29 +222,31 @@ class TimingFitter:
             prev_end, prev_line = start + dur, line
         return results
 
-    def _speed_up(self, line: _Line, speed: float) -> tuple[Path, float]:
-        """Line audio at *speed*: the engine's own rate first (sounds more natural), atempo
-        for what it falls short of — piper voices often follow length_scale only partly."""
-        src, dur = line.wav, line.dur
-        if getattr(self._engine, "supports_rate", True):
-            rate = f"+{math.ceil((speed - 1) * 100)}%"
-            tts = asyncio.run(self._engine.synthesize_one(line.text, line.id, rate=rate))
-            src, dur = self._trimmed(tts.wav_path)
-        rest = line.dur / speed
-        if dur <= rest * 1.01:
-            return src, dur
-        factor = min(dur / rest, MAX_SPEED)
-        dst = self._speed_dir / f"{src.stem}_x{factor:.3f}.wav"
-        if not dst.exists():
-            _apply_atempo(self._ffmpeg, src, dst, factor)
-        return dst, _wav_duration(dst)
+    def _at_speed(self, line: _Line, speed: float) -> tuple[Path, float, float]:
+        """(wav, duration, speed actually applied) of *line* at *speed* — atempo; on
+        failure the line keeps its normal speed (placement still avoids overlaps)."""
+        if speed <= 1.005:
+            return line.wav, line.dur, 1.0
+        dst = self._speed_dir / f"{line.wav.stem}_x{speed:.3f}.wav"
+        try:
+            if not dst.exists():
+                part = dst.with_name(dst.stem + ".part.wav")   # never reuse a half-written file
+                _apply_atempo(self._ffmpeg, line.wav, part, speed)
+                part.replace(dst)
+            return dst, _wav_duration(dst), speed
+        except Exception as exc:
+            log.warning("Speed-up failed for seg %d: %s", line.id, exc)
+            return line.wav, line.dur, 1.0
 
     def _trimmed(self, src: Path) -> tuple[Path, float]:
-        """*src* without the engine's leading / trailing silence (cached in speed_dir)."""
-        dst = self._speed_dir / f"{src.stem}_t.wav"
+        """*src* without the engine's leading / trailing silence, at the common speech
+        loudness (cached in speed_dir)."""
+        dst = self._speed_dir / f"{src.stem}_tn.wav"
         if not dst.exists():
             samples, sr, width = _read_pcm(src)
-            _write_pcm(dst, trim_silence(samples, sr), sr, width)
+            part = dst.with_name(dst.stem + ".part.wav")
+            _write_pcm(part, normalize_speech(trim_silence(samples, sr), sr), sr, width)
+            part.replace(dst)
         return dst, _wav_duration(dst)
 
 
@@ -317,6 +327,34 @@ def trim_silence(samples: np.ndarray, sr: int) -> np.ndarray:
         out[:fade] *= ramp
         out[-fade:] *= ramp[::-1]
     return out
+
+
+def _voiced_rms(x: np.ndarray, sr: int) -> float:
+    """RMS of the 10 ms frames that carry speech (0.0 when there are none)."""
+    frame = max(1, sr // 100)
+    n = len(x) // frame
+    if n == 0:
+        return 0.0
+    rms = np.sqrt(np.mean(x[: n * frame].reshape(n, frame) ** 2, axis=1))
+    peak = float(np.abs(x).max())
+    voiced = rms[rms > max(peak * 0.05, 1e-4)]   # relative: very quiet voices count too
+    return float(np.sqrt(np.mean(voiced ** 2))) if len(voiced) else 0.0
+
+
+def normalize_speech(x: np.ndarray, sr: int) -> np.ndarray:
+    """Bring the speech to SPEECH_DBFS (gain ≤ ±MAX_GAIN_DB), soft-limit the peaks."""
+    x = x.astype(np.float32)
+    level = _voiced_rms(x, sr)
+    if level <= 0.0:
+        return x
+    gain_db = float(np.clip(SPEECH_DBFS - 20 * np.log10(level), -MAX_GAIN_DB, MAX_GAIN_DB))
+    y = x * np.float32(10 ** (gain_db / 20))
+    over = np.abs(y) > LIMIT_FROM
+    if over.any():
+        head = 1.0 - LIMIT_FROM
+        a = np.abs(y[over])
+        y[over] = np.sign(y[over]) * (LIMIT_FROM + head * np.tanh((a - LIMIT_FROM) / head))
+    return y
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

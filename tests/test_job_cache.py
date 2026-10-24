@@ -151,3 +151,27 @@ def test_stored_translation_ignored_after_asr_text_changes(env):
     env.vad_model = None                             # different segmentation / text
     env.run("groq")
     assert env.translate_calls == ["groq", "groq"]
+
+
+def test_old_asr_signature_is_upgraded_to_the_source_audio(tmp_path):
+    """asr.json signed with the vocal stem's digest (before sep_overlap) stays reusable
+    after the stems are re-made at another quality — no new ASR, no new translation."""
+    import json
+    from dubber.core.pipeline import _upgrade_asr_sig
+    from dubber.core.utils.job_cache import file_digest, sig_path, write_sig
+    audio, vocals, asr = tmp_path / "audio.wav", tmp_path / "audio_vocals_16k.wav", tmp_path / "asr.json"
+    audio.write_bytes(b"source"); vocals.write_bytes(b"stem-0.25"); asr.write_text("[]")
+    write_sig(asr, {"audio": file_digest(vocals), "use_vocals": True, "vad": "fsmn"})
+    _upgrade_asr_sig(asr, audio, vocals)
+    assert json.loads(sig_path(asr).read_text())["audio"] == file_digest(audio)
+
+
+def test_stale_asr_signature_is_not_upgraded(tmp_path):
+    import json
+    from dubber.core.pipeline import _upgrade_asr_sig
+    from dubber.core.utils.job_cache import sig_path, write_sig
+    audio, vocals, asr = tmp_path / "audio.wav", tmp_path / "audio_vocals_16k.wav", tmp_path / "asr.json"
+    audio.write_bytes(b"source"); vocals.write_bytes(b"stem"); asr.write_text("[]")
+    write_sig(asr, {"audio": "made-from-something-else", "use_vocals": True})
+    _upgrade_asr_sig(asr, audio, vocals)
+    assert json.loads(sig_path(asr).read_text())["audio"] == "made-from-something-else"

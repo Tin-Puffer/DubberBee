@@ -156,8 +156,11 @@ class PipelineWorker(QObject):
         sub_box: bool = False,
         blur_pad: int = 12,
         asr_on_vocals: bool = True,
+        sep_overlap: "float | None" = None,
         tts_engine: str = "piper",
         skip_review: bool = True,
+        logo: "dict | None" = None,
+        dub_voice: bool = True,
     ) -> None:
         super().__init__()
         import threading
@@ -168,6 +171,9 @@ class PipelineWorker(QObject):
         self._answer = None
         self._created: list = []   # files made outside the job dir (deleted on cancel)
         self.asr_on_vocals   = asr_on_vocals
+        self.sep_overlap     = sep_overlap   # None = the pipeline's default
+        self.logo            = logo          # run_m5's logo dict, None = no logo
+        self.dub_voice       = dub_voice     # False: subtitles only, no TTS
         self.tts_engine      = tts_engine
         self.skip_review     = skip_review
         self.sub_font        = sub_font
@@ -218,12 +224,12 @@ class PipelineWorker(QObject):
 
     def _settings(self) -> dict:
         """What this job was run with (for error reports)."""
-        keys = ("translator", "skip_review", "tts_engine", "voice", "asr_on_vocals",
+        keys = ("translator", "skip_review", "tts_engine", "voice", "asr_on_vocals", "sep_overlap",
                 "trim_start", "trim_end",
                 "vi_volume", "music_volume", "cn_voice_volume", "keep_music", "keep_cn_voice",
                 "show_subtitles", "scale", "fps", "crf", "encoder_preset", "audio_bitrate",
                 "blur_mode", "blur_pad", "sub_font", "sub_size", "sub_color",
-                "sub_outline_color", "sub_outline", "sub_box", "output_dir")
+                "sub_outline_color", "sub_outline", "sub_box", "logo", "dub_voice", "output_dir")
         return {k: getattr(self, k, None) for k in keys}
 
     def _report_error(self, exc: BaseException) -> None:
@@ -288,8 +294,20 @@ class PipelineWorker(QObject):
             trimming = self.trim_start > 0 or self.trim_end is not None
             if trimming:
                 check_trim(self.input_path, self.trim_start, self.trim_end)
-            job_dir = prepare_job_dir(
-                self.input_path, trim=(self.trim_start, self.trim_end) if trimming else None)
+            # A queue prefetch may be separating this video right now: let it finish
+            # (its stems are then reused) instead of preparing the dir under it
+            from dubber.core.audio.separate import separation_lock
+            from dubber.core.utils.paths import job_dir_for
+            lock = separation_lock(job_dir_for(self.input_path))
+            if not lock.acquire(blocking=False):
+                self.step_started.emit("Separate")
+                while not lock.acquire(timeout=0.25):
+                    check()
+            try:
+                job_dir = prepare_job_dir(
+                    self.input_path, trim=(self.trim_start, self.trim_end) if trimming else None)
+            finally:
+                lock.release()
 
             # ── Video trim ────────────────────────────────────────────────────
             input_path = self.input_path
@@ -313,6 +331,8 @@ class PipelineWorker(QObject):
             check()
             pipeline = Pipeline(ffmpeg=ffmpeg, ffprobe=ffprobe, job_dir=job_dir)
             pipeline.cancel_check = check
+            if self.sep_overlap is not None:
+                pipeline.sep_overlap = self.sep_overlap
             pipeline.on_rate_limit = lambda info: self._ask("rate_limit", info) or "continue"
             if not self.skip_review:
                 pipeline.review_translation = lambda rows: self._review(
@@ -321,7 +341,6 @@ class PipelineWorker(QObject):
             orig_m1 = pipeline.run_m1
             orig_m2 = pipeline.run_m2
             orig_m3 = pipeline.run_m3
-            orig_m4 = pipeline.run_m4
 
             asr_started = [False]
 
@@ -341,20 +360,18 @@ class PipelineWorker(QObject):
 
             def _m2(p, **kw):
                 self.step_started.emit("Translate")
-                r = orig_m2(p, **kw); check(); self.step_done.emit("Translate"); return r
+                r = orig_m2(p, **kw); check(); self.step_done.emit("Translate")
+                if not self.dub_voice:              # subtitles only: no TTS step at all
+                    self.step_started.emit("TTS"); self.step_done.emit("TTS")
+                return r
 
             def _m3(p, **kw):
                 self.step_started.emit("TTS")
                 r = orig_m3(p, **kw); check(); self.step_done.emit("TTS"); return r
 
-            def _m4(p, **kw):
-                self.step_started.emit("Mux")
-                r = orig_m4(p, **kw); check(); self.step_done.emit("Mux"); return r
-
             pipeline.run_m1 = _m1
             pipeline.run_m2 = _m2
             pipeline.run_m3 = _m3
-            pipeline.run_m4 = _m4
 
             def _on_render(pct: float) -> None:
                 check()   # raising here kills the FFmpeg render
@@ -401,6 +418,8 @@ class PipelineWorker(QObject):
                              "tts": lambda pct: self.step_progress.emit("TTS", int(pct * 100))},
                 asr_on_vocals=self.asr_on_vocals,
                 tts_engine=self.tts_engine,
+                logo=self.logo,
+                dub_voice=self.dub_voice,
             )
 
             # ── Copy result out of the job cache to the user's output folder ──
@@ -632,6 +651,14 @@ def _scrollable(page: QWidget) -> QWidget:
     return area
 
 
+def _section(form: "QFormLayout", title: str) -> None:
+    """A group heading spanning the form (a thin rule + small caps title)."""
+    lbl = QLabel(title.upper(), form.parentWidget())
+    lbl.setStyleSheet(f"color: {_TXT_DIM}; font-size: 11px; font-weight: 700; letter-spacing: 1px;"
+                      f" padding: 10px 0 4px 0; border-bottom: 1px solid {_BORDER};")
+    form.addRow(lbl)
+
+
 def _finish_form(form: "QFormLayout") -> None:
     """Make every label as tall as a field and centre it, so rows line up."""
     for i in range(form.rowCount()):
@@ -689,6 +716,19 @@ _HINTS_TRANSLATOR = {
     "nllb":  "Offline, chất lượng khá hơn MarianMT, chậm · tải ~5,5 GB, cần ~6 GB RAM",
 }
 _HINT_ASR_VOCALS = "Nhận dạng chính xác hơn với video có nhạc nền, chậm hơn một chút"
+# Separation quality = MDX-Net chunk overlap; times for a 14-min video on an M1 Pro
+_SEP_QUALITIES = [
+    (0.1,  "Nhanh"),
+    (0.25, "Cân bằng"),
+    (0.5,  "Chất lượng cao"),
+    (0.75, "Tối đa"),
+]
+_HINTS_SEP = {
+    0.1:  "Nhanh nhất (~2 phút 20 giây / video 14 phút) · nhạc nền có thể lụp bụp ở chỗ nối",
+    0.25: "~3 phút / video 14 phút · nhạc nền khá",
+    0.5:  "~4 phút / video 14 phút · nhạc nền mượt — nên dùng",
+    0.75: "~7 phút 30 giây / video 14 phút · chỉ hơn “Chất lượng cao” một chút",
+}
 _HINT_TRIM = "Chỉ xử lý đoạn đã chọn — nhanh hơn khi chạy thử"
 _HINT_REVIEW = ("Bỏ chọn để dừng sau bước dịch: xem / sửa bản dịch (hoặc nhờ AI sửa) trước khi "
                 "tạo giọng Việt. Nên giữ chọn khi chạy video dài.")
@@ -699,9 +739,17 @@ _HINT_BOX = "Hộp nền tối sau chữ — dễ đọc nhưng che nhiều khun
 _HINTS_BLUR = {
     "off":    "Không che — giữ nguyên khung hình gốc",
     "auto":   "Vùng làm mờ ôm sát dòng phụ đề dài nhất, hiện suốt video",
-    "custom": "Tự chọn vùng che phụ đề tiếng Trung trên khung hình",
+    "custom": "Vẽ vùng che phụ đề tiếng Trung trong “Chỉnh trên khung hình…”",
 }
 _HINT_BLUR_PAD = "Lớn hơn: che kín phụ đề gốc hơn nhưng che nhiều khung hình hơn"
+_LOGO_POSITIONS = [
+    ("tr", "Góc trên phải"),
+    ("tl", "Góc trên trái"),
+    ("br", "Góc dưới phải"),
+    ("bl", "Góc dưới trái"),
+    ("custom", "Tự chọn trên khung hình"),
+]
+_HINT_LOGO = "Ảnh PNG nền trong suốt đẹp nhất · nằm dưới phụ đề, hiện suốt video"
 DEFAULT_SUB_COLOR, DEFAULT_OUTLINE_COLOR = "#FFFFFF", "#000000"
 DEFAULT_OUTLINE, DEFAULT_BLUR_PAD = 2, 12
 _HINTS_RES = {None: "Giữ nguyên như video gốc"}
@@ -729,6 +777,7 @@ def _add_hint(form: "QFormLayout", widget: QWidget, hints, default: str = "") ->
 
     if isinstance(widget, QComboBox) and not isinstance(hints, str):
         widget.currentIndexChanged.connect(update)
+    widget.refresh_hint = update   # for changes made with signals blocked (set_config)
     update()
     return lbl
 
@@ -798,7 +847,9 @@ def _make_vol_slider(parent, default: int = 20, max_val: int = 100) -> tuple:
 
 class OptionsPanel(QWidget):
     sep_label_changed = Signal()  # emitted when sliders/checkboxes change
-    layout_edit_requested = Signal(str)  # "blur" | "sub" — open the frame editor
+    layout_edit_requested = Signal(str)  # open the frame editor (subtitle / blur / logo)
+    logo_changed = Signal()              # logo image / size / opacity / position changed
+    preview_changed = Signal()           # subtitle position / blur choice changed
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -830,11 +881,16 @@ class OptionsPanel(QWidget):
             f"QSlider::sub-page:horizontal {{ background: {_GREEN}; border-radius: 2px; }}"
             f"QSlider::handle:horizontal {{ background: {_GREEN}; width: 14px; height: 14px;"
             f" margin: -5px 0; border-radius: 7px; }}"
+            f"QSlider::sub-page:horizontal:disabled {{ background: #555; }}"
+            f"QSlider::handle:horizontal:disabled {{ background: #777; }}"
         )
         self._sld_vi.valueChanged.connect(self._update_vi_label)
-        lbl_vi = QLabel("Giọng Việt", self)
-        lbl_vi.setStyleSheet(f"color: {_GREEN}; font-weight: 600;")
-        form.addRow(lbl_vi, _hbox(self._sld_vi, self._lbl_vi_vol))
+        self._chk_vi = QCheckBox("Giọng Việt", self)
+        self._chk_vi.setChecked(True)
+        self._chk_vi.setStyleSheet(f"QCheckBox {{ color: {_GREEN}; font-weight: 600; }}")
+        self._chk_vi.setToolTip("Bỏ chọn: chỉ phụ đề, không lồng tiếng Việt (bỏ qua bước TTS)")
+        self._chk_vi.toggled.connect(self._on_audio_toggled)
+        form.addRow(self._chk_vi, _hbox(self._sld_vi, self._lbl_vi_vol))
 
         self._chk_music = QCheckBox("Nhạc nền", self)
         self._chk_music.setChecked(True)
@@ -853,6 +909,19 @@ class OptionsPanel(QWidget):
         self._hint = _hint_label(self)
         form.addRow("", self._hint)
         form.addRow("", _hint_label(self, "100% = giữ nguyên độ to của âm thanh gốc"))
+
+        from dubber.core.audio.separate import DEFAULT_OVERLAP
+        import importlib.util as _ilu
+        self._combo_sep = QComboBox(self)
+        for value, label in _SEP_QUALITIES:
+            text = f"{label} — overlap {value:g}".replace(".", ",")
+            self._combo_sep.addItem(text + (" (mặc định)" if value == DEFAULT_OVERLAP else ""),
+                                    userData=value)
+        _select_data(self._combo_sep, DEFAULT_OVERLAP)
+        if _ilu.find_spec("audio_separator") is None:
+            self._combo_sep.setEnabled(False)
+        form.addRow("Tách nhạc", self._combo_sep)
+        _add_hint(form, self._combo_sep, _HINTS_SEP)
         self._on_audio_toggled()
         _finish_form(form)
         self._tabs.addTab(_scrollable(page_audio), "Âm thanh")
@@ -932,10 +1001,23 @@ class OptionsPanel(QWidget):
         self._tabs.addTab(_scrollable(page_voice), "Giọng && dịch")
 
         # ── Tab: Phụ đề ───────────────────────────────────────────────────────
+        # One editor for everything placed on the frame (subtitle line, blur area, logo):
+        # the button at the top; the groups below only hold settings + where things are.
         page_sub, form = _form_page(self)
         self._blur_rect: "tuple | None" = None
         self._sub_pos: "tuple | None" = None
+        self._sub_mode = "default"      # "custom" once the line is placed on the frame
 
+        self._btn_frame = QPushButton("🎬   Chỉnh trên khung hình…", self)
+        self._btn_frame.setMinimumHeight(38)
+        self._btn_frame.setToolTip("Khung hình thật, giống hệt video xuất ra: kéo phụ đề, "
+                                   "vùng làm mờ và logo trực tiếp")
+        self._btn_frame.clicked.connect(lambda: self.layout_edit_requested.emit("frame"))
+        form.addRow(self._btn_frame)
+        form.addRow(_hint_label(self, "Kéo phụ đề, vẽ vùng che phụ đề gốc, đặt và đổi cỡ logo "
+                                      "ngay trên khung hình — xem đúng như video xuất ra"))
+
+        _section(form, "Chữ phụ đề")
         self._chk_subs = QCheckBox("Chèn phụ đề tiếng Việt vào video", self)
         self._chk_subs.setChecked(True)
         form.addRow("Phụ đề", self._chk_subs)
@@ -955,60 +1037,203 @@ class OptionsPanel(QWidget):
         self._spin_size.setSingleStep(2)
         self._spin_size.setFixedWidth(100)
         self._spin_size.setToolTip("Cỡ chữ theo khung 1080p — tự co giãn theo độ phân giải video")
-        self._btn_preview = _small_button("Xem trước trên video…", self)
-        self._btn_preview.setToolTip("Xem phụ đề trên khung hình thật, giống hệt bản render")
-        self._btn_preview.clicked.connect(lambda: self.layout_edit_requested.emit("preview"))
-        form.addRow("Cỡ chữ", _hbox(self._spin_size, self._btn_preview, stretch_last=False))
-
-        self._combo_sub = QComboBox(self)
-        self._combo_sub.addItem("Mặc định (giữa, sát đáy)", userData="default")
-        self._combo_sub.addItem("Tự chọn trên khung hình", userData="custom")
-        self._btn_sub = _small_button("Chọn vị trí…", self)
-        self._btn_sub.clicked.connect(lambda: self.layout_edit_requested.emit("sub"))
-        form.addRow("Vị trí", _hbox(self._combo_sub, self._btn_sub, stretch_first=True))
+        form.addRow("Cỡ chữ", _hbox(self._spin_size, stretch_last=False))
 
         self._btn_color = _ColorButton(DEFAULT_SUB_COLOR, "Màu chữ phụ đề", self)
-        form.addRow("Màu chữ", _hbox(self._btn_color, stretch_last=False))
         self._btn_outline_color = _ColorButton(DEFAULT_OUTLINE_COLOR, "Màu viền chữ", self)
-        form.addRow("Màu viền", _hbox(self._btn_outline_color, stretch_last=False))
+        form.addRow("Màu chữ / viền", _hbox(self._btn_color, self._btn_outline_color,
+                                            stretch_last=False))
         _add_hint(form, self._btn_outline_color, _HINT_OUTLINE_COLOR)
         self._spin_outline = QSpinBox(self)
         self._spin_outline.setRange(0, 8)
         self._spin_outline.setValue(DEFAULT_OUTLINE)
-        self._spin_outline.setSuffix(" px")
-        self._spin_outline.setFixedWidth(100)
-        form.addRow("Độ dày viền", _hbox(self._spin_outline, stretch_last=False))
-        _add_hint(form, self._spin_outline, _HINT_OUTLINE)
-        self._chk_box = QCheckBox("Hộp nền tối sau chữ (box)", self)
-        form.addRow("Nền chữ", self._chk_box)
-        _add_hint(form, self._chk_box, _HINT_BOX)
+        self._spin_outline.setSuffix(" px viền")
+        self._spin_outline.setFixedWidth(110)
+        self._spin_outline.setToolTip(_HINT_OUTLINE)
+        self._chk_box = QCheckBox("Hộp nền tối sau chữ", self)
+        self._chk_box.setToolTip(_HINT_BOX)
+        form.addRow("Viền / nền", _hbox(self._spin_outline, self._chk_box, stretch_first=False))
 
-        # Cover the original (Chinese) subtitles: one of off / auto / custom
+        self._lbl_sub_pos = QLabel(self)
+        self._btn_sub_reset = _small_button("↺ Mặc định", self)
+        self._btn_sub_reset.setToolTip("Đưa phụ đề về giữa, sát đáy")
+        self._btn_sub_reset.clicked.connect(self._reset_sub_pos)
+        form.addRow("Vị trí", _hbox(self._lbl_sub_pos, self._btn_sub_reset, stretch_first=True))
+
+        _section(form, "Che phụ đề gốc")
+        # one of off / auto / custom (the area is drawn in the frame editor)
         self._combo_blur = QComboBox(self)
         self._combo_blur.addItem("Tắt", userData="off")
         self._combo_blur.addItem("Tự động (theo phụ đề Việt, cả video)", userData="auto")
-        self._combo_blur.addItem("Tùy chọn (vùng tự chọn, cả video)", userData="custom")
+        self._combo_blur.addItem("Vùng tự vẽ (cả video)", userData="custom")
         _select_data(self._combo_blur, "auto")
-        self._btn_blur = _small_button("Chọn vùng…", self)
-        self._btn_blur.clicked.connect(lambda: self.layout_edit_requested.emit("blur"))
-        form.addRow("Che phụ đề gốc", _hbox(self._combo_blur, self._btn_blur, stretch_first=True))
+        form.addRow("Che", self._combo_blur)
         _add_hint(form, self._combo_blur, _HINTS_BLUR)
         self._spin_blur_pad = QSpinBox(self)
         self._spin_blur_pad.setRange(0, 40)
         self._spin_blur_pad.setValue(DEFAULT_BLUR_PAD)
         self._spin_blur_pad.setSuffix(" px")
         self._spin_blur_pad.setFixedWidth(100)
+        self._spin_blur_pad.setToolTip(_HINT_BLUR_PAD)
         form.addRow("Lề vùng làm mờ", _hbox(self._spin_blur_pad, stretch_last=False))
-        _add_hint(form, self._spin_blur_pad, _HINT_BLUR_PAD)
-
         self._lbl_layout = _hint_label(self)
         form.addRow("", self._lbl_layout)
+
+        _section(form, "Logo kênh")
+        self._build_logo_rows(form)
+
         _finish_form(form)
         self._tabs.addTab(_scrollable(page_sub), "Phụ đề")
 
         self._combo_blur.currentIndexChanged.connect(self._on_blur_mode_changed)
-        self._combo_sub.currentIndexChanged.connect(self._on_sub_mode_changed)
         self._on_layout_changed()
+
+    # ── Logo ──────────────────────────────────────────────────────────────────
+
+    def _build_logo_rows(self, form) -> None:
+        from dubber.core.video.logo import (
+            DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE, MAX_SIZE, MIN_SIZE,
+        )
+        self._logo_path: "str | None" = None
+        self._logo_pos: "tuple | None" = None
+        self._chk_logo = QCheckBox("Gắn logo kênh", self)
+        self._btn_logo_file = _small_button("Chọn ảnh…", self)
+        self._btn_logo_file.clicked.connect(self._pick_logo)
+        self._lbl_logo_thumb = QLabel(self)
+        self._lbl_logo_thumb.setFixedSize(44, 30)
+        self._lbl_logo_thumb.setAlignment(Qt.AlignCenter)
+        self._lbl_logo_thumb.setStyleSheet(f"border: 1px solid {_BORDER}; border-radius: 4px;")
+        form.addRow("Logo", _hbox(self._chk_logo, self._lbl_logo_thumb, self._btn_logo_file,
+                                  stretch_first=True))
+        _add_hint(form, self._chk_logo, _HINT_LOGO)
+
+        self._spin_logo_size = QSpinBox(self)
+        self._spin_logo_size.setRange(MIN_SIZE, MAX_SIZE)
+        self._spin_logo_size.setValue(DEFAULT_SIZE)
+        self._spin_logo_size.setSuffix(" % rộng")
+        self._spin_logo_size.setFixedWidth(110)
+        self._spin_logo_size.setToolTip("Chiều rộng logo so với chiều rộng video")
+        self._spin_logo_opacity = QSpinBox(self)
+        self._spin_logo_opacity.setRange(10, 100)
+        self._spin_logo_opacity.setSingleStep(5)
+        self._spin_logo_opacity.setValue(DEFAULT_OPACITY)
+        self._spin_logo_opacity.setSuffix(" % rõ")
+        self._spin_logo_opacity.setFixedWidth(100)
+        self._spin_logo_opacity.setToolTip("100% = rõ hoàn toàn · thấp hơn = mờ hơn")
+        form.addRow("Cỡ / độ rõ", _hbox(self._spin_logo_size, self._spin_logo_opacity,
+                                        stretch_last=False))
+
+        self._combo_logo_pos = QComboBox(self)
+        for value, label in _LOGO_POSITIONS:
+            self._combo_logo_pos.addItem(label, userData=value)
+        _select_data(self._combo_logo_pos, DEFAULT_POSITION)
+        self._combo_logo_pos.setToolTip("Hoặc kéo logo / góc logo trong “Chỉnh trên khung hình…”")
+        form.addRow("Vị trí logo", self._combo_logo_pos)
+
+        self._load_last_logo()
+        self._chk_logo.toggled.connect(self._on_logo_changed)
+        self._spin_logo_size.valueChanged.connect(self._on_logo_changed)
+        self._spin_logo_opacity.valueChanged.connect(self._on_logo_changed)
+        self._combo_logo_pos.currentIndexChanged.connect(self._on_logo_pos_mode)
+        # What the user sets is remembered (settings.json "last_logo") for videos added
+        # later — also after restarting the app. set_config blocks these signals, so
+        # switching between queued videos doesn't overwrite it.
+        for sig in (self._chk_logo.toggled, self._spin_logo_size.valueChanged,
+                    self._spin_logo_opacity.valueChanged,
+                    self._combo_logo_pos.currentIndexChanged):
+            sig.connect(self._remember_logo)
+        self._on_logo_changed()
+
+    _LOGO_KEYS = ("logo_on", "logo_path", "logo_size", "logo_opacity", "logo_position",
+                  "logo_pos")
+
+    def _load_last_logo(self) -> None:
+        from dubber.core.utils.settings import load_settings
+        from dubber.core.video.logo import POSITIONS
+        last = load_settings().get("last_logo")
+        if not isinstance(last, dict) or not last.get("logo_path"):
+            return
+        if not Path(last["logo_path"]).exists():     # image removed from the data folder
+            return
+        self._logo_path = last["logo_path"]
+        self._logo_pos = tuple(last["logo_pos"]) if last.get("logo_pos") else None
+        self._chk_logo.setChecked(bool(last.get("logo_on")))
+        if isinstance(last.get("logo_size"), int):
+            self._spin_logo_size.setValue(last["logo_size"])
+        if isinstance(last.get("logo_opacity"), int):
+            self._spin_logo_opacity.setValue(last["logo_opacity"])
+        if last.get("logo_position") in POSITIONS:
+            _select_data(self._combo_logo_pos, last["logo_position"])
+
+    def _remember_logo(self, *_) -> None:
+        if not self._logo_path:
+            return
+        from dubber.core.utils.settings import load_settings, save_settings
+        cfg = self.get_config()
+        st = load_settings()
+        st["last_logo"] = {k: cfg[k] for k in self._LOGO_KEYS}
+        save_settings(st)
+
+    def _pick_logo(self) -> None:
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from dubber.core.video.logo import import_logo
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn ảnh logo", str(Path.home()),
+            "Ảnh (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if not path:
+            return
+        try:
+            self._logo_path = str(import_logo(Path(path)))
+        except Exception as exc:
+            QMessageBox.warning(self, "Không dùng được ảnh này", f"Không đọc được ảnh:\n{exc}")
+            return
+        self._chk_logo.setChecked(True)
+        self._on_logo_changed()
+        self._remember_logo()
+
+    def _on_logo_pos_mode(self, *_):
+        if (self._combo_logo_pos.currentData() == "custom" and not self._logo_pos
+                and self._logo_path and self._editable()):
+            self.layout_edit_requested.emit("frame")
+        self._on_logo_changed()
+
+    def _on_logo_changed(self, *_):
+        has_image = bool(self._logo_path) and Path(self._logo_path).exists()
+        on = self._chk_logo.isChecked()
+        for w in (self._spin_logo_size, self._spin_logo_opacity, self._combo_logo_pos):
+            w.setEnabled(on and has_image)
+        thumb = QPixmap(self._logo_path) if has_image else QPixmap()
+        if thumb.isNull():
+            self._lbl_logo_thumb.setPixmap(QPixmap())
+            self._lbl_logo_thumb.setText("—")
+        else:
+            self._lbl_logo_thumb.setPixmap(thumb.scaled(40, 26, Qt.KeepAspectRatio,
+                                                        Qt.SmoothTransformation))
+        self.logo_changed.emit()
+
+    def logo_settings(self) -> "dict | None":
+        """The logo as run_m5 / the previews take it, or None when off / no image."""
+        if not (self._chk_logo.isChecked() and self._logo_path):
+            return None
+        position = self._combo_logo_pos.currentData()
+        if position == "custom" and not self._logo_pos:
+            position = "tr"
+        return {"path": self._logo_path, "size": self._spin_logo_size.value(),
+                "opacity": self._spin_logo_opacity.value(), "position": position,
+                "pos": self._logo_pos if position == "custom" else None}
+
+    def set_logo_layout(self, logo: "dict | None") -> None:
+        """Size / position picked in the frame editor."""
+        if not logo:
+            return
+        self._spin_logo_size.setValue(int(logo.get("size", self._spin_logo_size.value())))
+        if logo.get("position") == "custom" and logo.get("pos"):
+            self._logo_pos = tuple(logo["pos"])
+            self._combo_logo_pos.blockSignals(True)
+            _select_data(self._combo_logo_pos, "custom")
+            self._combo_logo_pos.blockSignals(False)
+        self._on_logo_changed()
+        self._remember_logo()
 
     def add_page(self, widget: QWidget, title: str) -> None:
         """Extra tab (the export settings live here too, so they disable together)."""
@@ -1021,36 +1246,39 @@ class OptionsPanel(QWidget):
 
     def _on_blur_mode_changed(self, *_):
         if self._combo_blur.currentData() == "custom" and not self._blur_rect and self._editable():
-            self.layout_edit_requested.emit("blur")
+            self.layout_edit_requested.emit("frame")     # nothing drawn yet: draw it now
         self._on_layout_changed()
 
-    def _on_sub_mode_changed(self, *_):
-        if self._combo_sub.currentData() == "custom" and not self._sub_pos and self._editable():
-            self.layout_edit_requested.emit("sub")
+    def _reset_sub_pos(self) -> None:
+        self._sub_mode, self._sub_pos = "default", None
         self._on_layout_changed()
 
     def _on_layout_changed(self, *_):
         mode = self._combo_blur.currentData()
-        self._btn_blur.setEnabled(mode == "custom")
         self._spin_blur_pad.setEnabled(mode == "auto")
-        self._btn_sub.setEnabled(self._combo_sub.currentData() == "custom")
-        parts = []
-        if mode == "custom":
-            parts.append("Vùng mờ: " + ("đã chọn" if self._blur_rect else "⚠ chưa chọn → dùng tự động"))
-        if self._combo_sub.currentData() == "custom":
-            parts.append("Phụ đề: " + ("đã chọn vị trí" if self._sub_pos else "⚠ chưa chọn → mặc định"))
-        self._lbl_layout.setText("  ·  ".join(parts))
+        custom_sub = self._sub_mode == "custom" and bool(self._sub_pos)
+        self._lbl_sub_pos.setText("Tự chọn trên khung hình" if custom_sub
+                                  else "Giữa, sát đáy (mặc định)")
+        self._btn_sub_reset.setEnabled(custom_sub)
+        if mode == "custom" and not self._blur_rect:
+            self._lbl_layout.setText("⚠ Chưa vẽ vùng → đang dùng Tự động. "
+                                     "Bấm “Chỉnh trên khung hình…” và kéo trên chỗ trống để vẽ.")
+        elif mode == "custom":
+            self._lbl_layout.setText("Đã vẽ vùng — chỉnh lại trong “Chỉnh trên khung hình…”")
+        else:
+            self._lbl_layout.setText("")
+        self._lbl_layout.setVisible(bool(self._lbl_layout.text()))
+        self.preview_changed.emit()
 
     def set_layout(self, blur_rect, sub_pos, blur_mode: "str | None" = None) -> None:
         """Store results from the frame editor (normalized coords)."""
         self._blur_rect = tuple(blur_rect) if blur_rect else None
         self._sub_pos = tuple(sub_pos) if sub_pos else None
+        self._sub_mode = "custom" if self._sub_pos else "default"
         if blur_mode:
             self._combo_blur.blockSignals(True)
             _select_data(self._combo_blur, blur_mode)
             self._combo_blur.blockSignals(False)
-        if self._sub_pos:
-            _select_data(self._combo_sub, "custom")
         self._on_layout_changed()
 
     def layout_state(self) -> tuple:
@@ -1088,6 +1316,9 @@ class OptionsPanel(QWidget):
     def _on_audio_toggled(self, *_):
         music = self._chk_music.isChecked()
         voice = self._chk_cn_voice.isChecked()
+        vi = self._chk_vi.isChecked()
+        self._sld_vi.setEnabled(vi)
+        self._lbl_vi_vol.setEnabled(vi)
         self._sld_music.setEnabled(music)
         self._lbl_music_vol.setEnabled(music)
         self._sld_cn_voice.setEnabled(voice)
@@ -1100,6 +1331,12 @@ class OptionsPanel(QWidget):
             msg = "Tách bằng AI → chỉ giữ tiếng Trung"
         else:
             msg = "Tắt hoàn toàn âm thanh gốc"
+        if not vi:
+            msg = ("Chỉ phụ đề: không lồng tiếng Việt, bỏ qua bước TTS (nhanh hơn) · phụ đề theo "
+                   "câu tiếng Trung · " + ("nên để Tiếng Trung 100% để nghe rõ tiếng gốc"
+                                           if voice else msg[0].lower() + msg[1:]))
+            if not (music or voice):
+                msg = "⚠ Không còn âm thanh nào — video xuất ra sẽ không có tiếng"
         self._hint.setText(msg)
         self.sep_label_changed.emit()
 
@@ -1357,6 +1594,7 @@ class OptionsPanel(QWidget):
     def get_config(self) -> dict:
         return {
             "vi": self._sld_vi.value(),
+            "vi_on": self._chk_vi.isChecked(),
             "music_on": self._chk_music.isChecked(),
             "music": self._sld_music.value(),
             "cn_on": self._chk_cn_voice.isChecked(),
@@ -1367,13 +1605,14 @@ class OptionsPanel(QWidget):
             "translator": self._combo_translator.currentData(),
             "skip_review": self._chk_skip_review.isChecked(),
             "asr_vocals": self._chk_asr_vocals.isChecked(),
+            "sep_overlap": self._combo_sep.currentData(),
             "trim_on": self._chk_trim.isChecked(),
             "trim_start": self._trim.trim()[0],
             "trim_end": self._trim.trim()[1] or 0.0,   # 0 = until the end
             "blur_mode": self._combo_blur.currentData(),
             "blur_rect": self._blur_rect,
             "blur_pad": self._spin_blur_pad.value(),
-            "sub_mode": self._combo_sub.currentData(),
+            "sub_mode": self._sub_mode,
             "sub_pos": self._sub_pos,
             "sub_font": self._combo_font.currentData(),
             "sub_size": self._spin_size.value(),
@@ -1381,10 +1620,17 @@ class OptionsPanel(QWidget):
             "sub_outline_color": self._btn_outline_color.color(),
             "sub_outline": self._spin_outline.value(),
             "sub_box": self._chk_box.isChecked(),
+            "logo_on": self._chk_logo.isChecked(),
+            "logo_path": self._logo_path,
+            "logo_size": self._spin_logo_size.value(),
+            "logo_opacity": self._spin_logo_opacity.value(),
+            "logo_position": self._combo_logo_pos.currentData(),
+            "logo_pos": self._logo_pos,
         }
 
     def set_config(self, cfg: dict) -> None:
         self._sld_vi.setValue(cfg["vi"])
+        self._chk_vi.setChecked(cfg.get("vi_on", True))   # .get(): older configs = voice on
         self._chk_music.setChecked(cfg["music_on"])
         self._sld_music.setValue(cfg["music"])
         self._chk_cn_voice.setChecked(cfg["cn_on"])
@@ -1402,14 +1648,15 @@ class OptionsPanel(QWidget):
         _select_data(self._combo_translator, _translator_of(cfg))
         self._chk_skip_review.setChecked(cfg.get("skip_review", True))
         self._chk_asr_vocals.setChecked(cfg.get("asr_vocals", True) and self._mdxnet)
+        _select_data(self._combo_sep, _sep_overlap_of(cfg))
         self._chk_trim.setChecked(cfg["trim_on"])
         self._trim.set_trim(cfg["trim_start"], cfg["trim_end"] or None)
         # Layout keys: .get() so configs saved before this feature still load
         self._blur_rect = cfg.get("blur_rect")
         self._sub_pos = cfg.get("sub_pos")
-        self._combo_blur.blockSignals(True); self._combo_sub.blockSignals(True)
+        self._combo_blur.blockSignals(True)
         _select_data(self._combo_blur, _blur_mode_of(cfg))
-        _select_data(self._combo_sub, cfg.get("sub_mode", "default"))
+        self._sub_mode = "custom" if cfg.get("sub_mode") == "custom" else "default"
         from dubber.core.video.fonts import DEFAULT_FONT, DEFAULT_FONT_SIZE
         _select_data(self._combo_font, cfg.get("sub_font", DEFAULT_FONT))
         self._spin_size.setValue(cfg.get("sub_size", DEFAULT_FONT_SIZE))
@@ -1418,8 +1665,24 @@ class OptionsPanel(QWidget):
         self._btn_outline_color.set_color(cfg.get("sub_outline_color", DEFAULT_OUTLINE_COLOR))
         self._spin_outline.setValue(cfg.get("sub_outline", DEFAULT_OUTLINE))
         self._chk_box.setChecked(cfg.get("sub_box", False))
-        self._combo_blur.blockSignals(False); self._combo_sub.blockSignals(False)
+        self._combo_blur.blockSignals(False)
+        self._combo_blur.refresh_hint()
         self._on_layout_changed()
+        # Logo: .get() so configs saved before the logo option still load
+        from dubber.core.video.logo import DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE
+        self._logo_path = cfg.get("logo_path")
+        self._logo_pos = tuple(cfg["logo_pos"]) if cfg.get("logo_pos") else None
+        for w in (self._chk_logo, self._spin_logo_size, self._spin_logo_opacity,
+                  self._combo_logo_pos):
+            w.blockSignals(True)
+        self._chk_logo.setChecked(bool(cfg.get("logo_on")))
+        self._spin_logo_size.setValue(cfg.get("logo_size", DEFAULT_SIZE))
+        self._spin_logo_opacity.setValue(cfg.get("logo_opacity", DEFAULT_OPACITY))
+        _select_data(self._combo_logo_pos, cfg.get("logo_position", DEFAULT_POSITION))
+        for w in (self._chk_logo, self._spin_logo_size, self._spin_logo_opacity,
+                  self._combo_logo_pos):
+            w.blockSignals(False)
+        self._on_logo_changed()
 
 
 # ── Export panel ──────────────────────────────────────────────────────────────
@@ -1759,9 +2022,35 @@ _STEPS = [
     ("ASR",       "Nhận dạng giọng nói (ASR)"),
     ("Translate", "Dịch"),
     ("TTS",       "Tạo giọng Việt (TTS)"),
-    ("Mux",       "Ghép âm thanh"),
     ("Render",    "Render video"),
 ]
+
+
+def _sep_overlap_of(o: dict) -> float:
+    """Separation quality of a per-video config (configs saved before it: the default)."""
+    from dubber.core.audio.separate import DEFAULT_OVERLAP, OVERLAPS
+    v = o.get("sep_overlap")
+    return v if v in OVERLAPS else DEFAULT_OVERLAP
+
+
+def _needs_stems(o: dict) -> bool:
+    """Will this video's run separate music? (ASR on the vocal stem, or music and Chinese
+    voice at different volumes — the same rules as Pipeline.run_m1 / run_m5.)"""
+    if o.get("asr_vocals", True):
+        return True
+    if o["music_on"] and o["cn_on"]:
+        return abs(o["music"] - o["cn"]) >= 1
+    return o["music_on"] or o["cn_on"]
+
+
+def _prefetch_stems(path: Path, overlap: float) -> None:
+    """Background thread: separate a queued video's music before its turn."""
+    try:
+        from dubber.core.pipeline import prefetch_stems
+        from dubber.core.utils.ffmpeg_locator import find_ffmpeg, find_ffprobe
+        prefetch_stems(path, find_ffmpeg(), find_ffprobe(), overlap)
+    except Exception:
+        log.exception("Prefetch of %s failed — it separates on its own turn", path.name)
 
 
 def _translator_of(o: dict) -> str:
@@ -1795,7 +2084,22 @@ def _layout_kwargs(o: dict) -> dict:
         "sub_outline_color": o.get("sub_outline_color", DEFAULT_OUTLINE_COLOR),
         "sub_outline": o.get("sub_outline", DEFAULT_OUTLINE),
         "sub_box": o.get("sub_box", False),
+        "logo": _logo_of(o),
     }
+
+
+def _logo_of(o: dict) -> "dict | None":
+    """Per-video config → run_m5's logo argument (None: off, no image, or image gone)."""
+    from dubber.core.video.logo import DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE
+    path = o.get("logo_path")
+    if not (o.get("logo_on") and path and Path(path).exists()):
+        return None
+    position = o.get("logo_position", DEFAULT_POSITION)
+    if position == "custom" and not o.get("logo_pos"):
+        position = DEFAULT_POSITION
+    return {"path": path, "size": o.get("logo_size", DEFAULT_SIZE),
+            "opacity": o.get("logo_opacity", DEFAULT_OPACITY), "position": position,
+            "pos": tuple(o["logo_pos"]) if position == "custom" else None}
 
 
 class _Job:
@@ -1838,6 +2142,8 @@ class MainWindow(QWidget):
         disable_wheel_on_inputs(QApplication.instance())
         self._progress = None         # RunProgress of the running video
         self._ran = 0                 # videos finished in this run of the queue (notifications)
+        self._prefetch = None         # thread separating the next queued video's music
+        self._prefetched: set = set() # paths prefetched in this run of the queue
         self._build_ui()
         # Elapsed / time-left labels tick once a second while a video runs
         self._tick_timer = QTimer(self)
@@ -1976,8 +2282,8 @@ class MainWindow(QWidget):
         for sig in (o._combo_font.currentIndexChanged, o._spin_size.valueChanged,
                     o._btn_color.changed, o._btn_outline_color.changed,
                     o._spin_outline.valueChanged, o._chk_box.toggled, o._chk_subs.toggled,
-                    o._combo_sub.currentIndexChanged, o._combo_blur.currentIndexChanged,
-                    o._spin_blur_pad.valueChanged):
+                    o.preview_changed, o._combo_blur.currentIndexChanged,
+                    o._spin_blur_pad.valueChanged, o.logo_changed):
             sig.connect(lambda *_: self._preview_timer.start())
         self._export = ExportPanel(self)
         self._opts.add_page(self._export, "Xuất video")
@@ -2547,16 +2853,16 @@ class MainWindow(QWidget):
         blur_rect, sub_pos = self._opts.layout_state()
         family, size = self._opts.sub_font()
         blur_mode = self._opts.blur_mode()
-        if mode == "blur" and blur_mode != "off":
-            blur_mode = "custom"            # "Chọn vùng…" → manual area
         info = job.info
         dims = (info.width, info.height, info.duration) if info and info.width else None
-        dlg = LayoutDialog(job.path, blur_rect, sub_pos, start_mode=mode,
+        dlg = LayoutDialog(job.path, blur_rect, sub_pos,
                            font_family=family, font_size=size, blur_mode=blur_mode,
-                           style=self._opts.sub_style(), video_info=dims, parent=self)
+                           style=self._opts.sub_style(), video_info=dims, parent=self,
+                           logo=self._opts.logo_settings())
         if dlg.exec() == QDialog.Accepted:
             self._opts.set_layout(dlg.blur_rect, dlg.sub_pos, dlg.blur_mode)
             self._opts.set_sub_font(dlg.font_family, dlg.font_size)
+            self._opts.set_logo_layout(dlg.logo)
             self._commit_selected()
         else:
             self._opts._on_layout_changed()
@@ -2595,6 +2901,7 @@ class MainWindow(QWidget):
         if kind == "rate_limit":
             answer = ask_rate_limit(payload, parent=self)
         elif kind == "review":
+            self._prefetch_next()   # translated; the user may take minutes — use them
             from dubber.app.review_dialog import ReviewDialog
             self._set_status(f"{payload['video']}: chờ bạn duyệt bản dịch…", _AMBER)
             dlg = ReviewDialog(payload["video"], payload["rows"], audio=payload["audio"],
@@ -2642,6 +2949,7 @@ class MainWindow(QWidget):
                 notify.notify(self, f"{APP_NAME} — hàng đợi xong",
                               f"{done} video xong" + (f", {err} lỗi" if err else ""))
             self._ran = 0
+            self._prefetched.clear()
             done = sum(j.status == _Job.DONE for j in self._jobs)
             err = sum(j.status == _Job.ERROR for j in self._jobs)
             if self._cancelling:   # keep the "cancelled" message
@@ -2679,6 +2987,7 @@ class MainWindow(QWidget):
         self._worker = PipelineWorker(
             job.path,
             vi_volume=o["vi"] / 100.0,
+            dub_voice=o.get("vi_on", True),
             music_volume=o["music"] / 100.0 if o["music_on"] else 0.0,
             cn_voice_volume=o["cn"] / 100.0 if o["cn_on"] else 0.0,
             show_subtitles=o["subs"],
@@ -2689,6 +2998,7 @@ class MainWindow(QWidget):
             trim_end=(o["trim_end"] or None) if o["trim_on"] else None,
             translator=_translator_of(o),
             asr_on_vocals=o.get("asr_vocals", True),
+            sep_overlap=_sep_overlap_of(o),
             tts_engine=o.get("tts_engine", "piper"),
             skip_review=o.get("skip_review", True),
             scale=e["scale"],
@@ -2716,7 +3026,29 @@ class MainWindow(QWidget):
         self._thread.finished     .connect(self._run_next)
         self._thread.start()
 
+    def _prefetch_next(self) -> None:
+        """Once the running video is translated (review wait / TTS / render: CPU and FFmpeg
+        only), separate the next queued video's music in the background — its run then
+        reuses the stems (separation is ~half a run). Not earlier: the GPU (MPS) is
+        shared with local translation and only one can use it (utils/gpu.py)."""
+        if self._prefetch is not None and self._prefetch.is_alive():
+            return
+        cur = self._jobs[self._running] if 0 <= self._running < len(self._jobs) else None
+        nxt = next((j for j in self._jobs if j.status == _Job.PENDING), None)
+        if (nxt is None or cur is None or nxt.path in self._prefetched
+                or nxt.opts.get("trim_on") or nxt.path.resolve() == cur.path.resolve()
+                or not _needs_stems(nxt.opts)):
+            return
+        import threading
+        self._prefetched.add(nxt.path)
+        self._prefetch = threading.Thread(target=_prefetch_stems,
+                                          args=(nxt.path, _sep_overlap_of(nxt.opts)),
+                                          name="stems-prefetch", daemon=True)
+        self._prefetch.start()
+
     def _on_started(self, name: str):
+        if name in ("TTS", "Render"):   # translated: no GPU work left, the next can start
+            self._prefetch_next()
         if self._progress is not None:
             self._progress.started(name)
         if name in self._rows:
@@ -2857,6 +3189,15 @@ class MainWindow(QWidget):
                 continue
             self._add_job(job)
             restored += 1
+        if not st.get("last_logo"):
+            # Logo set before it was remembered app-wide: take it from a queued video
+            job = next((j for j in self._jobs if j.opts.get("logo_on")
+                        and j.opts.get("logo_path") and Path(j.opts["logo_path"]).exists()), None)
+            if job is not None:
+                from dubber.core.utils.settings import save_settings
+                st = load_settings()
+                st["last_logo"] = {k: job.opts.get(k) for k in OptionsPanel._LOGO_KEYS}
+                save_settings(st)
         if restored:
             self._list.setCurrentRow(0, QItemSelectionModel.ClearAndSelect)
             self._probe_next()

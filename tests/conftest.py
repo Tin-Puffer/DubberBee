@@ -31,6 +31,13 @@ def _isolated_settings(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_logs(tmp_path, monkeypatch):
+    """Error reports written by worker tests must not land in the user's real log folder."""
+    import dubber.core.utils.paths as paths
+    monkeypatch.setattr(paths, "default_logs_root", lambda: tmp_path / "logs")
+
+
+@pytest.fixture(autouse=True)
 def _memory_keyring():
     """Never touch the real Keychain / Credential Manager: an in-memory store instead."""
     try:

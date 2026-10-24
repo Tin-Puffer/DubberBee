@@ -28,6 +28,9 @@ class Pipeline:
         # review_translation(rows) -> list of Vietnamese texts (one per row): the user checks
         # / edits translate.json before TTS. None = no review step (run straight through)
         self.review_translation = None
+        # Music separation quality (MDX-Net chunk overlap, separate.OVERLAPS)
+        from dubber.core.audio.separate import DEFAULT_OVERLAP
+        self.sep_overlap = DEFAULT_OVERLAP
         self._extractor = AudioExtractor(ffmpeg=ffmpeg, ffprobe=ffprobe)
         self._renderer = VideoRenderer(ffmpeg=ffmpeg)
 
@@ -91,14 +94,18 @@ class Pipeline:
         log.info("ASR model: %s  VAD: %s", model_dir.name, vad_name)
 
         _cbs = on_progress or {}
+        asr_json = self.job_dir / "asr.json"
+        _upgrade_asr_sig(asr_json, audio_wav, self.job_dir / "audio_vocals_16k.wav")
         asr_wav = audio_wav
         if asr_on_vocals:
             asr_wav = self._vocals_for_asr(input_path, audio_wav, _cbs.get("separate"))
 
-        asr_json = self.job_dir / "asr.json"
+        # "audio" is the source audio even when ASR hears the vocal stem: re-separating
+        # at another quality (sep_overlap) must not redo ASR — and with it the translation
+        # the user may have reviewed
         sig = {
             "asr_version": ASR_VERSION,
-            "audio": file_digest(asr_wav),
+            "audio": file_digest(audio_wav),
             "vad": vad_name,
             "split_mode": split_mode,
             "use_vocals": asr_wav != audio_wav,
@@ -126,6 +133,19 @@ class Pipeline:
         log.info("=== M1 done  %d segments → %s ===", len(segments), asr_json)
         return asr_json
 
+    def stems(self, input_path: Path, on_separate=None) -> tuple[Path, Path]:
+        """(vocals, instrumental) of *input_path*, cached in job_dir/separated.
+
+        Holds the job dir's separation lock, so a queue prefetch of the same video
+        (prefetch_stems) and this run never write the stems at the same time.
+        """
+        from dubber.core.audio.separate import separate_tracks, separation_lock
+        with separation_lock(self.job_dir):
+            stereo_wav = self.job_dir / "audio_stereo.wav"
+            self._extractor.extract_audio_stereo(input_path, stereo_wav)
+            return separate_tracks(stereo_wav, self.job_dir / "separated",
+                                   progress_cb=on_separate, overlap=self.sep_overlap)
+
     def _vocals_for_asr(self, input_path: Path, audio_wav: Path, on_separate=None) -> Path:
         """16 kHz mono vocal stem for ASR, or *audio_wav* when that isn't possible.
 
@@ -137,7 +157,7 @@ class Pipeline:
         import wave
 
         from dubber.core.audio.separate import (
-            mdxnet_available, separate_tracks, separation_method,
+            mdxnet_available, separation_method,
         )
         from dubber.core.utils.ffmpeg_locator import no_window
 
@@ -145,12 +165,10 @@ class Pipeline:
             log.info("MDX-Net not installed — ASR runs on the original audio")
             return audio_wav
 
-        stereo_wav = self.job_dir / "audio_stereo.wav"
         sep_dir = self.job_dir / "separated"
         from dubber.core.utils.cancel import JobCancelled
         try:
-            self._extractor.extract_audio_stereo(input_path, stereo_wav)
-            vocals, _ = separate_tracks(stereo_wav, sep_dir, progress_cb=on_separate)
+            vocals, _ = self.stems(input_path, on_separate)
         except JobCancelled:
             raise
         except Exception as exc:
@@ -296,18 +314,32 @@ class Pipeline:
         asr_on_vocals: bool = True,
         vad: str = "fsmn",
         tts_engine: str = "piper",
-    ) -> tuple[Path, Path, Path, Path, Path]:
-        """M5: run_m4 → subtitles (.ass) → render final output.mp4.
+        logo: "dict | None" = None,
+        dub_voice: bool = True,
+    ) -> tuple[Path, Path, "Path | None", Path, Path]:
+        """M5: run_m3 → subtitles (.ass) → render final output.mp4 (from the source video;
+        M4's dubbed.mp4 isn't needed).
 
-        Returns (asr_json, translate_json, dub_wav, subs_ass, output_mp4).
+        dub_voice=False: subtitles only — no TTS at all (faster); subtitles follow the
+        Chinese timing and the audio is the original (music / Chinese voice settings).
+
+        Returns (asr_json, translate_json, dub_wav or None, subs_ass, output_mp4).
         """
         from dubber.core.video.subtitles import build_ass
 
-        asr_json, translate_json, dub_wav, dubbed_mp4 = self.run_m4(
-            input_path, translator=translator, voice=voice,
-            asr_on_vocals=asr_on_vocals, on_progress=on_progress, vad=vad,
-            tts_engine=tts_engine,
-        )
+        if dub_voice:
+            asr_json, translate_json, dub_wav = self.run_m3(
+                input_path, translator=translator, voice=voice,
+                asr_on_vocals=asr_on_vocals, on_progress=on_progress, vad=vad,
+                tts_engine=tts_engine,
+            )
+        else:
+            asr_json, translate_json = self.run_m2(
+                input_path, translator=translator, asr_on_vocals=asr_on_vocals,
+                on_progress=on_progress, vad=vad,
+            )
+            dub_wav = None
+            log.info("Vietnamese voice off — subtitles only, no TTS")
 
         # Load fitted results from dub metadata (re-run fit for subtitle timing)
         import json
@@ -322,7 +354,8 @@ class Pipeline:
         # Subtitles follow where the Vietnamese voice really is in dub.wav (fit.json),
         # not the Chinese ASR timing — they differ when lines were pushed / sped up.
         tts_dir = self.job_dir / "tts"
-        fitted = _load_fit_json(self.job_dir / "fit.json", translate_data)
+        fitted = (_load_fit_json(self.job_dir / "fit.json", translate_data) if dub_voice
+                  else _rebuild_fitted(translate_data, tts_dir))   # no voice: Chinese timing
         if fitted is None:
             log.warning("fit.json missing or stale — subtitles fall back to ASR timing")
             fitted = _rebuild_fitted(translate_data, tts_dir)
@@ -388,12 +421,7 @@ class Pipeline:
                 effective_volume = _music_vol if _music_vol > 0 else 0.20
             else:
                 # Different volumes: separate both, mix at individual levels
-                from dubber.core.audio.separate import separate_tracks
-                stereo_wav = self.job_dir / "audio_stereo.wav"
-                self._extractor.extract_audio_stereo(input_path, stereo_wav)
-                vocals_wav, instrumental_wav = separate_tracks(
-                    stereo_wav, self.job_dir / "separated", progress_cb=on_sep
-                )
+                vocals_wav, instrumental_wav = self.stems(input_path, on_sep)
                 background_wav = _mix_two_tracks(
                     instrumental_wav, vocals_wav, _music_vol, _voice_vol,
                     self.ffmpeg, self.job_dir,
@@ -401,24 +429,16 @@ class Pipeline:
                 effective_volume = 1.0  # pre-scaled in background_wav
 
         elif keep_music:  # only music, not voice
-            from dubber.core.audio.separate import separate_tracks
-            stereo_wav = self.job_dir / "audio_stereo.wav"
-            self._extractor.extract_audio_stereo(input_path, stereo_wav)
-            _, instrumental_wav = separate_tracks(
-                stereo_wav, self.job_dir / "separated", progress_cb=on_sep
-            )
+            _, instrumental_wav = self.stems(input_path, on_sep)
             background_wav = instrumental_wav
             effective_volume = _music_vol if _music_vol > 0 else 0.20
 
         else:  # only voice, not music
-            from dubber.core.audio.separate import separate_tracks
-            stereo_wav = self.job_dir / "audio_stereo.wav"
-            self._extractor.extract_audio_stereo(input_path, stereo_wav)
-            vocals_wav, _ = separate_tracks(
-                stereo_wav, self.job_dir / "separated", progress_cb=on_sep
-            )
+            vocals_wav, _ = self.stems(input_path, on_sep)
             background_wav = vocals_wav
             effective_volume = _voice_vol if _voice_vol > 0 else 0.20
+
+        logo_arg = _logo_arg(logo, w, h)
 
         output_mp4 = self.job_dir / "output.mp4"
         log.info("=== M5 render start ===")
@@ -439,6 +459,7 @@ class Pipeline:
             encoder_preset=encoder_preset,
             audio_bitrate=audio_bitrate,
             fonts_dir=fonts_dir(),
+            logo=logo_arg,
         )
         log.info("=== M5 done → %s ===", output_mp4)
         return asr_json, translate_json, dub_wav, subs_ass, output_mp4
@@ -570,6 +591,71 @@ class Pipeline:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _logo_arg(logo: "dict | None", w: int, h: int) -> "tuple | None":
+    """GUI logo settings {path, size, opacity, position, pos} → render_final's
+    (image, x, y, w, h, opacity), or None (no logo / image missing — the video still renders)."""
+    if not logo or not logo.get("path"):
+        return None
+    from dubber.core.video.logo import (
+        DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE, image_size, logo_rect,
+    )
+    path = Path(logo["path"])
+    try:
+        iw, ih = image_size(path)
+    except Exception as exc:
+        log.warning("Logo skipped — cannot read %s (%s)", path, exc)
+        return None
+    x, y, lw, lh = logo_rect(w, h, iw, ih, logo.get("size", DEFAULT_SIZE),
+                             logo.get("position", DEFAULT_POSITION), logo.get("pos"))
+    opacity = max(0.0, min(1.0, logo.get("opacity", DEFAULT_OPACITY) / 100))
+    log.info("Logo: %s at %d,%d %dx%d, %.0f%%", path.name, x, y, lw, lh, opacity * 100)
+    return path, x, y, lw, lh, opacity
+
+
+def _upgrade_asr_sig(asr_json: Path, audio_wav: Path, vocals_16k: Path) -> None:
+    """asr.json signed by the file ASR heard (before sep_overlap existed) → signed by the
+    source audio, so it survives re-separating. Only when it still matches that file."""
+    import json
+    from dubber.core.utils.job_cache import sig_path
+    sp = sig_path(asr_json)
+    try:
+        sig = json.loads(sp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not (asr_json.exists() and audio_wav.exists()):
+        return
+    heard = vocals_16k if sig.get("use_vocals") else audio_wav
+    source = file_digest(audio_wav)
+    if sig.get("audio") == source or not heard.exists():
+        return
+    if sig.get("audio") == file_digest(heard):
+        sig["audio"] = source
+        write_sig(asr_json, sig)
+        log.info("asr.json signature upgraded (now keyed on the source audio)")
+
+
+def prefetch_stems(input_path: Path, ffmpeg: Path, ffprobe: Path,
+                   overlap: "float | None" = None) -> "Path | None":
+    """Separate a queued video's music ahead of its turn (GUI queue, while the previous
+    video is in ASR / TTS / render). Its own run then reuses the cached stems.
+
+    Only for untrimmed videos (a trimmed one separates trimmed.mp4). Returns the job dir,
+    or None when MDX-Net isn't installed.
+    """
+    from dubber.core.audio.separate import mdxnet_available, separation_lock
+    from dubber.core.utils.paths import job_dir_for, prepare_job_dir
+    if not mdxnet_available():
+        return None
+    with separation_lock(job_dir_for(input_path)):   # the queued run waits for this
+        job_dir = prepare_job_dir(input_path)
+        log.info("Prefetch: separating %s ahead of its turn", input_path.name)
+        pipeline = Pipeline(ffmpeg, ffprobe, job_dir)
+        if overlap is not None:
+            pipeline.sep_overlap = overlap
+        pipeline.stems(input_path)
+    return job_dir
+
 
 def _write_fit_json(fitted: list, path: Path) -> None:
     """Persist where each Vietnamese line actually sits in dub.wav (for subtitle timing)."""

@@ -4,9 +4,10 @@ from __future__ import annotations
 import time
 from typing import Callable, Dict, Optional
 
-# Share of a typical run spent in each step (separation and TTS dominate)
+# Share of a typical run spent in each step (measured on a 14-min video, M1 Pro;
+# TTS includes timing + Groq shortening)
 STEP_WEIGHTS: Dict[str, float] = {
-    "Separate": 0.25, "ASR": 0.10, "Translate": 0.10, "TTS": 0.35, "Mux": 0.05, "Render": 0.15,
+    "Separate": 0.40, "ASR": 0.05, "Translate": 0.10, "TTS": 0.25, "Render": 0.20,
 }
 ORDER = list(STEP_WEIGHTS)
 MIN_FRACTION_FOR_ETA = 0.03

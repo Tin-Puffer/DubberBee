@@ -32,7 +32,7 @@ def pipe(tmp_path, monkeypatch):
 
 def _fake_separation(monkeypatch, job: Path, vocals_s: float, method: str = "mdxnet",
                      calls: list | None = None):
-    def separate_tracks(stereo, out_dir, progress_cb=None):
+    def separate_tracks(stereo, out_dir, progress_cb=None, overlap=None):
         if calls is not None:
             calls.append(progress_cb)
         out_dir.mkdir(parents=True, exist_ok=True)
