@@ -186,6 +186,13 @@ def test_retry_after_header_parsing():
                                      "x-ratelimit-reset-requests": "2s"})) == 9.5
     assert gt._retry_after(_limited({"retry-after": "900"})) == gt.MAX_WAIT
     assert gt._retry_after(_limited()) == gt.RATE_LIMIT_WAIT
+    # retry-after wins; a request window with requests left is not waited for
+    assert gt._retry_after(_limited({"retry-after": "49", "x-ratelimit-reset-requests": "7m12s",
+                                     "x-ratelimit-remaining-requests": "995"})) == 49
+    assert gt._retry_after(_limited({"x-ratelimit-reset-requests": "7m12s",
+                                     "x-ratelimit-remaining-requests": "995",
+                                     "x-ratelimit-reset-tokens": "9s",
+                                     "x-ratelimit-remaining-tokens": "0"})) == 9
 
 
 def test_rate_limit_asks_once_then_continues(monkeypatch):
@@ -236,3 +243,28 @@ def test_cli_rate_limit_still_gives_up():
     calls = _script(t, [_limited()] * 100)
     out = t.translate(_segs(1))
     assert out[0].vi == "" and len(calls) < 30
+
+
+# ── shorten (TimingFitter) ────────────────────────────────────────────────────
+
+def test_shorten_keeps_only_shorter_lines_for_asked_ids():
+    t = GroqTranslator(api_key="test")
+    prompts = []
+
+    def fake_call(model, prompt, system=gt._SYSTEM_PROMPT):
+        prompts.append((model, prompt, system))
+        return ('[{"id": 0, "vi": "Ngắn."}, {"id": 1, "vi": "Dài hơn cả câu gốc rất nhiều."},'
+                ' {"id": 9, "vi": "Lạ."}]')
+
+    with patch.object(t, "_call_model", side_effect=fake_call):
+        out = t.shorten([{"id": 0, "vi": "Một câu khá dài.", "zh": "句子", "max_chars": 8},
+                         {"id": 1, "vi": "Câu.", "zh": "句", "max_chars": 3}])
+    assert out == {0: "Ngắn."}
+    assert prompts[0][2] is gt._SHORTEN_PROMPT and '"max_chars": 8' in prompts[0][1]
+
+
+def test_shorten_failure_returns_nothing_instead_of_raising():
+    t = GroqTranslator(api_key="test")
+    with patch.object(t, "_call_model", side_effect=RuntimeError("boom")), \
+         patch.object(t, "_sleep"):
+        assert t.shorten([{"id": 0, "vi": "Một câu dài.", "zh": "句", "max_chars": 5}]) == {}

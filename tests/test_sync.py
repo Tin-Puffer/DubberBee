@@ -45,7 +45,7 @@ def test_subtitles_follow_fit_json_not_asr_timing(tmp_path):
     from dubber.core.pipeline import _load_fit_json, _write_fit_json
     translate = [{"id": 0, "start": 1.0, "end": 3.0, "vi_text": "Xin chào"},
                  {"id": 1, "start": 3.0, "end": 5.0, "vi_text": "Tạm biệt"}]
-    fitted = [FittingResult(0, "Xin chào", Path("."), 2.4, 1.0, 3.4, 1.0, "pushed"),
+    fitted = [FittingResult(0, "Xin chào", Path("."), 2.4, 1.0, 3.4, 1.0, "late"),
               FittingResult(1, "Tạm biệt", Path("."), 1.5, 3.5, 5.0, 1.0, "fits")]
     _write_fit_json(fitted, tmp_path / "fit.json")
     got = _load_fit_json(tmp_path / "fit.json", translate)
@@ -57,3 +57,26 @@ def test_stale_fit_json_is_ignored(tmp_path):
     (tmp_path / "fit.json").write_text(json.dumps(
         [{"id": 0, "vi_text": "cũ", "final_start": 0, "final_end": 1, "speed": 1, "status": "fits"}]))
     assert _load_fit_json(tmp_path / "fit.json", [{"id": 0, "vi_text": "mới"}]) is None
+
+
+def test_shortened_lines_are_saved_to_translate_json_and_stored_copy(tmp_path):
+    from dubber.core.audio.fit import FittingResult
+    from dubber.core.pipeline import _save_shortened
+    from dubber.core.utils.job_cache import sig_matches, write_sig
+    rows = [{"id": 0, "start": 0.0, "end": 1.0, "src_text": "长", "vi_text": "Một câu rất dài."},
+            {"id": 1, "start": 1.0, "end": 2.0, "src_text": "短", "vi_text": "Ngắn."}]
+    tj = tmp_path / "translate.json"
+    tj.write_text(json.dumps(rows), encoding="utf-8")
+    sig = {"asr": "x", "translator": "auto"}
+    write_sig(tj, sig)
+    (tmp_path / "translations").mkdir()
+    stored = tmp_path / "translations" / "auto.json"
+    stored.write_text(json.dumps(rows), encoding="utf-8")
+    write_sig(stored, sig)
+    fitted = [FittingResult(0, "Câu ngắn.", Path("."), 1, 0, 1, 1, "shortened"),
+              FittingResult(1, "Ngắn.", Path("."), 1, 1, 2, 1, "fits")]
+    _save_shortened(fitted, rows, tj, "auto")
+    for p in (tj, stored):
+        assert [r["vi_text"] for r in json.loads(p.read_text(encoding="utf-8"))] == \
+            ["Câu ngắn.", "Ngắn."]
+        assert sig_matches(p, sig)       # a rerun still reuses the (shortened) translation

@@ -21,6 +21,7 @@ DEFAULT_MODEL = "qwen/qwen3.8-27b"
 FALLBACK_MODEL = "openai/gpt-oss-20b"
 
 BATCH_SIZE = 30
+SHORTEN_BATCH = 15      # replies stay under the free tier's ~1000 output tokens / minute
 CONTEXT_SIZE = 3
 MAX_RETRIES = 6
 MAX_BACKOFF = 30.0
@@ -43,6 +44,15 @@ Quy tắc:
 - Không thêm giải thích, ghi chú hay markdown.
 - Bản dịch tiếng Việt phải ngắn gọn: dưới max_chars ký tự.
 - Chỉ trả về JSON array, không có text khác."""
+
+_SHORTEN_PROMPT = """\
+Bạn là biên tập viên lồng tiếng. Nhận JSON array [{id, zh, vi, max_chars}]: vi là bản dịch của zh
+nhưng quá dài để đọc kịp. Viết lại vi NGẮN HƠN, tối đa max_chars ký tự, trả về JSON array [{id, vi}].
+Quy tắc:
+- Giữ ý chính của zh, tự nhiên như lời kể, giữ nguyên xưng hô và tên riêng.
+- Bỏ từ thừa, dùng cách nói gọn hơn; không tóm tắt mất ý quan trọng.
+- Viết như lời đọc: không dùng ký hiệu hay viết tắt (24/24, %, &, v.v.).
+- Không thêm giải thích, ghi chú hay markdown. Chỉ trả về JSON array."""
 
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.MULTILINE)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -94,15 +104,20 @@ class GroqTranslator(Translator):
             self._client = Groq(api_key=self._api_key, max_retries=0)
         return self._client
 
-    def _call_model(self, model: str, prompt: str) -> str:
+    def _call_model(self, model: str, prompt: str, system: str = _SYSTEM_PROMPT) -> str:
+        extra = {}
+        if "gpt-oss" in model:
+            # Default reasoning can use the whole reply budget → empty answer
+            extra["reasoning_effort"] = "low"
         response = self._get_client().chat.completions.create(
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             model=model,
             temperature=0.3,
             timeout=30,
+            **extra,
         )
         return response.choices[0].message.content
 
@@ -136,6 +151,41 @@ class GroqTranslator(Translator):
             TranslateResult(id=seg.id, vi=all_results.get(seg.id, ""))
             for seg in segments
         ]
+
+    def shorten(self, items: List[Dict]) -> Dict[int, str]:
+        """Shorter Vietnamese for lines too long to speak in time (TimingFitter).
+
+        items: [{"id", "vi", "zh", "max_chars"}] → {id: shorter vi}. Lines the model
+        can't shorten are left out; failures only cost the shortening, never the job.
+        """
+        out: Dict[int, str] = {}
+        for i in range(0, len(items), SHORTEN_BATCH):
+            batch = items[i : i + SHORTEN_BATCH]
+            prompt = json.dumps(
+                [{"id": it["id"], "zh": it.get("zh", ""), "vi": it["vi"],
+                  "max_chars": it["max_chars"]} for it in batch], ensure_ascii=False)
+            limited = None
+            for attempt in range(6):   # primary, fallback, primary, …
+                self._check()
+                model = self._model if attempt % 2 == 0 else self._fallback
+                try:
+                    parsed = _parse_response(self._call_model(model, prompt, _SHORTEN_PROMPT))
+                    break
+                except Exception as exc:
+                    log.warning("Shorten request failed (%s): %s", model, str(exc)[:200])
+                    if _is_rate_limit(exc):
+                        limited = exc
+                if attempt % 2 == 1 and limited is not None:   # both models tried
+                    self._sleep(_retry_after(limited))
+                    limited = None
+            else:
+                continue
+            wanted = {it["id"]: it for it in batch}
+            for k, v in parsed.items():
+                if k in wanted and v and len(v) < len(wanted[k]["vi"]):
+                    out[k] = v
+        log.info("Groq shortened %d/%d line(s)", len(out), len(items))
+        return out
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -302,18 +352,25 @@ def _parse_names(raw: str) -> List[str]:
 
 
 def _retry_after(exc: Exception) -> float:
-    """Seconds the server asks us to wait (retry-after / x-ratelimit-reset-*), bounded."""
+    """Seconds the server asks us to wait, bounded.
+
+    retry-after is the server's own answer; without it, x-ratelimit-reset-* of the limits
+    that ran out. A limit with requests / tokens left doesn't count — the daily request
+    window often resets in minutes while only the per-minute tokens were used up.
+    """
     headers = getattr(getattr(exc, "response", None), "headers", None) or {}
-    waits = []
     ra = headers.get("retry-after")
     if ra:
         try:
-            waits.append(float(ra))
+            return max(MIN_WAIT, min(MAX_WAIT, float(ra)))
         except ValueError:
             pass
-    for key in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
-        if headers.get(key):
-            waits.append(_parse_duration(headers[key]))
+    waits = []
+    for kind in ("requests", "tokens"):
+        reset = headers.get(f"x-ratelimit-reset-{kind}")
+        left = headers.get(f"x-ratelimit-remaining-{kind}")
+        if reset and (left is None or left.strip() in ("0", "")):
+            waits.append(_parse_duration(reset))
     wait = max(waits) if waits else RATE_LIMIT_WAIT
     return max(MIN_WAIT, min(MAX_WAIT, wait))
 

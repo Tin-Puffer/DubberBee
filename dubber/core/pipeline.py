@@ -236,8 +236,10 @@ class Pipeline:
             tts_engine=engine,
             ffmpeg=self.ffmpeg,
             speed_dir=speed_dir,
+            shortener=self._shortener(translator),
         )
         fitted = fitter.fit(tts_results, translate_data, video_info.duration)
+        _save_shortened(fitted, translate_data, translate_json, translator)
 
         _log_timing_stats(fitted)
 
@@ -247,6 +249,20 @@ class Pipeline:
 
         log.info("=== M3 done → %s ===", dub_wav)
         return asr_json, translate_json, dub_wav
+
+    def _shortener(self, translator: str):
+        """Groq's shorten() for lines too long to speak in time; None without Groq."""
+        import os
+        if translator not in ("auto", "groq") or not os.environ.get("GROQ_API_KEY"):
+            return None
+        try:
+            from dubber.core.translate.groq_translator import GroqTranslator
+            groq = GroqTranslator()
+        except Exception as exc:
+            log.info("No shortener (%s) — long lines are only sped up / delayed", exc)
+            return None
+        groq.cancel_check = self.cancel_check
+        return groq.shorten
 
     def run_m5(
         self,
@@ -565,6 +581,31 @@ def _write_fit_json(fitted: list, path: Path) -> None:
     ], ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def _save_shortened(fitted: list, translate_data: list, translate_json: Path,
+                    translator: str) -> None:
+    """Write lines TimingFitter shortened back to translate.json and the stored
+    translation, so subtitles, the TikTok text and later runs use the spoken text."""
+    import json
+    import shutil
+    from dubber.core.utils.job_cache import sig_path
+    spoken = {f.id: f.vi_text for f in fitted}
+    changed = 0
+    for row in translate_data:
+        vi = spoken.get(row["id"])
+        if vi and vi != row.get("vi_text"):
+            row["vi_text"] = vi
+            changed += 1
+    if not changed:
+        return
+    translate_json.write_text(json.dumps(translate_data, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    stored = translate_json.parent / "translations" / f"{translator}.json"
+    if stored.exists() and sig_path(translate_json).exists():
+        shutil.copyfile(translate_json, stored)
+        shutil.copyfile(sig_path(translate_json), sig_path(stored))
+    log.info("Shortened %d line(s) to fit the timing", changed)
+
+
 def _load_fit_json(path: Path, translate_data: list) -> "list | None":
     """FittingResults from fit.json, or None if absent / not matching translate.json."""
     import json
@@ -797,10 +838,9 @@ def _log_timing_stats(fitted: list) -> None:
     from collections import Counter
     counts = Counter(f.status for f in fitted)
     log.info(
-        "Timing stats — fits:%d overflow:%d sped_up:%d shortened:%d pushed:%d",
-        counts.get("fits", 0), counts.get("overflow", 0),
-        counts.get("sped_up", 0), counts.get("shortened", 0),
-        counts.get("pushed", 0),
+        "Timing stats — fits:%d sped_up:%d shortened:%d late:%d",
+        counts.get("fits", 0), counts.get("sped_up", 0),
+        counts.get("shortened", 0), counts.get("late", 0),
     )
     header = f"{'ID':>3}  {'Status':<10}  {'TTS dur':>8}  {'Slot dur':>8}  {'Speed':>6}"
     log.info(header)

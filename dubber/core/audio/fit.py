@@ -1,8 +1,25 @@
-"""TimingFitter: fit TTS audio into segment slots via 5-step algorithm."""
+"""TimingFitter: lay the Vietnamese TTS lines on the video timeline.
+
+Rules, in order of priority:
+  1. Lines never overlap — each one starts after the previous one has finished plus a pause.
+  2. Natural pauses: SENTENCE_GAP after ". ! ? …", CLAUSE_GAP otherwise; where the
+     Chinese speaker paused longer, the line still starts at its own Chinese time.
+  3. A line may start up to MAX_LAG after its Chinese line; the voice catches up again
+     at the speaker's next pause.
+  4. To stay within that lag the whole video is sped up evenly (≤ MAX_GLOBAL_SPEED) and
+     single lines a bit more (≤ MAX_SPEED in total — applied once, never stacked).
+  5. Lines that still don't fit are shortened (optional *shortener*, e.g. Groq) and spoken
+     again; whatever is left over only delays the following lines.
+
+TTS engines pad every line with silence (piper: ~0.1 s before, ~0.3 s after); it is
+trimmed off so the pauses between lines are the ones chosen here.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import re
 import subprocess
 import wave
 from dataclasses import dataclass
@@ -16,14 +33,26 @@ from dubber.core.utils.ffmpeg_locator import no_window
 
 log = logging.getLogger(__name__)
 
-# Max seconds a segment may overflow into the silence after its end
-MAX_OVERFLOW_S = 0.5
-# 8% tolerance before triggering speed-up
-OVERFLOW_TOLERANCE = 0.08
-# Maximum atempo factor (FFmpeg atempo filter)
-MAX_ATEMPO = 1.3
-# Gap to leave before the next segment's start
-NEXT_SEG_GAP = 0.1
+# Pause before a line that follows a finished sentence / an unfinished clause
+SENTENCE_GAP = 0.3
+CLAUSE_GAP = 0.12
+# A line may start this much later than its Chinese line
+MAX_LAG = 1.5
+# Even speed-up for the whole video; and the most one line is ever sped up
+MAX_GLOBAL_SPEED = 1.15
+MAX_SPEED = 1.3
+# With a shortener: lines needing more than SHORTEN_ABOVE to fit before the next Chinese
+# line are rewritten to be spoken at about COMFORT_SPEED
+SHORTEN_ABOVE = 1.2
+COMFORT_SPEED = 1.1
+# Silence kept around the trimmed speech, and the fade over it (no clicks)
+EDGE_PAD = 0.03
+FADE_S = 0.01
+# Frames quieter than this (RMS, 10 ms) are silence when trimming
+SILENCE_RMS = 0.01
+SHORTEN_ROUNDS = 2
+
+_SENTENCE_END = re.compile(r"[.!?…。！？]['\"”’)\]]*\s*$")
 
 
 @dataclass
@@ -35,18 +64,38 @@ class FittingResult:
     final_start: float
     final_end: float
     speed: float   # 1.0 = original, >1.0 = sped up
-    status: Literal["fits", "overflow", "sped_up", "shortened", "pushed"]
+    status: Literal["fits", "sped_up", "shortened", "late"]
+
+
+@dataclass
+class _Line:
+    id: int
+    start: float          # Chinese line start / end
+    end: float
+    text: str
+    src_text: str
+    wav: Path             # trimmed speech at normal speed
+    dur: float
+    shortened: bool = False
+
+    @property
+    def ends_sentence(self) -> bool:
+        # The Chinese tells it best: the Vietnamese clean-up ends every line with "."
+        return bool(_SENTENCE_END.search(self.src_text or self.text))
+
+
+@dataclass
+class _Slot:
+    start: float
+    speed: float
+    end: float
+    overflow: float       # seconds past the latest end that keeps the next line in MAX_LAG
 
 
 class TimingFitter:
-    """Fit TTS results into their original segment time-slots.
+    """Place TTS lines without overlap; see the module docstring for the rules.
 
-    Steps (per segment):
-      1. fits       — TTS duration ≤ slot duration
-      2. overflow   — TTS overflows by ≤8%, allow it into trailing silence
-      3. sped_up    — Re-synthesize at higher rate; then apply ffmpeg atempo ≤1.3×
-      4. shortened  — Call optional *shortener* to get a shorter translation; re-TTS
-      5. pushed     — Accept as-is, push next segment forward ≤0.5s
+    shortener(items) gets [{"id", "vi", "zh", "max_chars"}] and returns {id: shorter vi}.
     """
 
     def __init__(
@@ -54,7 +103,7 @@ class TimingFitter:
         tts_engine: TTSEngine,
         ffmpeg: Path,
         speed_dir: Path,
-        shortener: Optional[Callable[[str, int], str]] = None,
+        shortener: Optional[Callable[[list[dict]], dict[int, str]]] = None,
     ) -> None:
         self._engine = tts_engine
         self._ffmpeg = ffmpeg
@@ -65,152 +114,209 @@ class TimingFitter:
     def fit(
         self,
         tts_results: list[TTSResult],
-        translate_data: list[dict],   # [{id, start, end, vi_text}]
+        translate_data: list[dict],   # [{id, start, end, vi_text, src_text?}]
         video_duration: float,
     ) -> list[FittingResult]:
-        """Fit all TTS results and return FittingResult list."""
-        # Build lookup maps
         tts_map = {r.segment_id: r for r in tts_results}
-        seg_map = {d["id"]: d for d in translate_data}
-        ids = sorted(seg_map)
-        n = len(ids)
-        results: list[FittingResult] = []
-
-        # Track pushed offsets for each segment start
-        pushed_starts = {d["id"]: d["start"] for d in translate_data}
-
-        for idx, seg_id in enumerate(ids):
-            seg = seg_map[seg_id]
-            tts = tts_map.get(seg_id)
+        lines: list[_Line] = []
+        for seg in sorted(translate_data, key=lambda d: (d["start"], d["id"])):
+            tts = tts_map.get(seg["id"])
             if tts is None:
-                log.warning("No TTS result for segment %d — skipping", seg_id)
+                if seg.get("vi_text"):
+                    log.warning("No TTS result for segment %d — skipping", seg["id"])
                 continue
+            wav, dur = self._trimmed(tts.wav_path)
+            lines.append(_Line(seg["id"], float(seg["start"]), float(seg["end"]),
+                               seg["vi_text"], seg.get("src_text", ""), wav, dur))
+        if not lines:
+            return []
 
-            vi_text: str = seg["vi_text"]
-            seg_start: float = pushed_starts[seg_id]
-            seg_end: float = seg["end"] + (pushed_starts[seg_id] - seg["start"])
-            slot_dur: float = seg["end"] - seg["start"]  # original slot
+        for _ in range(SHORTEN_ROUNDS if self._shortener else 0):
+            if not self._shorten(lines, video_duration):
+                break
+        speed, slots = choose_speed(lines, video_duration)
+        log.info("Timing: even speed %.2f×, %d lines still past their window",
+                 speed, sum(s.overflow > 0.05 for s in slots))
 
-            # Compute extended slot: can overflow into silence up to next segment
-            next_start = pushed_starts[ids[idx + 1]] if idx + 1 < n else video_duration
-            extended_end = min(seg["end"] + MAX_OVERFLOW_S, next_start - NEXT_SEG_GAP)
-            extended_slot = extended_end - seg_start
+        return self._render(lines, slots)
 
-            tts_dur = tts.duration
-            tts_path = tts.wav_path
+    # ── Shortening ────────────────────────────────────────────────────────────
 
-            # ── Step 1: fits perfectly ────────────────────────────────────────
-            if tts_dur <= slot_dur:
-                results.append(FittingResult(
-                    id=seg_id, vi_text=vi_text, tts_path=tts_path,
-                    tts_duration=tts_dur,
-                    final_start=seg_start, final_end=seg_start + tts_dur,
-                    speed=1.0, status="fits",
-                ))
+    def _shorten(self, lines: list[_Line], video_duration: float) -> bool:
+        """Ask the shortener for lines much too long for their own time; True if any changed.
+
+        Judged per line (until the next Chinese line starts), not on the planned timeline —
+        there one long line would make every later line look late.
+        """
+        items = []
+        for i, line in enumerate(lines):
+            nxt = lines[i + 1].start - _gap(line) if i + 1 < len(lines) else video_duration
+            need = line.dur / max(nxt - line.start, 0.1)
+            if need <= SHORTEN_ABOVE:
                 continue
+            keep = max(0.4, COMFORT_SPEED / need)
+            items.append({"id": line.id, "vi": line.text, "zh": line.src_text,
+                          "max_chars": max(6, int(len(line.text) * keep))})
+        if not items:
+            return False
+        log.info("Shortening %d line(s) that don't fit", len(items))
+        try:
+            short = self._shortener(items) or {}
+        except Exception as exc:
+            log.warning("Shortener failed: %s", exc)
+            return False
+        changed = False
+        for line in lines:
+            text = (short.get(line.id) or "").strip()
+            if not text or len(text) >= len(line.text):
+                continue
+            try:
+                tts = asyncio.run(self._engine.synthesize_one(text, line.id))
+            except Exception as exc:
+                log.warning("TTS of shortened line %d failed: %s", line.id, exc)
+                continue
+            line.text, line.shortened = text, True
+            line.wav, line.dur = self._trimmed(tts.wav_path)
+            changed = True
+        return changed
 
-            # ── Step 2: overflow within 8% of slot, into silence ─────────────
-            if tts_dur <= slot_dur * (1 + OVERFLOW_TOLERANCE):
-                if tts_dur <= extended_slot:
-                    results.append(FittingResult(
-                        id=seg_id, vi_text=vi_text, tts_path=tts_path,
-                        tts_duration=tts_dur,
-                        final_start=seg_start, final_end=seg_start + tts_dur,
-                        speed=1.0, status="overflow",
-                    ))
-                    continue
+    # ── Audio ─────────────────────────────────────────────────────────────────
 
-            # ── Step 3: speed up ──────────────────────────────────────────────
-            # 3a. Re-synthesize with edge-tts rate (+X%) — only for engines with a
-            #     speed control; the others (VieNeu Turbo) go straight to atempo
-            needed_ratio = tts_dur / extended_slot if extended_slot > 0 else 999
-            if needed_ratio <= MAX_ATEMPO and getattr(self._engine, "supports_rate", True):
-                rate_pct = min(int((needed_ratio - 1) * 100) + 5, 25)
-                rate_str = f"+{rate_pct}%"
+    def _render(self, lines: list[_Line], slots: list[_Slot]) -> list[FittingResult]:
+        """Make each line's audio at its planned speed, then place lines on the real durations
+        (a sped-up line rarely comes out exactly as planned) — still never overlapping."""
+        results: list[FittingResult] = []
+        prev_end, prev_line = -math.inf, None
+        for line, slot in zip(lines, slots):
+            wav, dur, speed = line.wav, line.dur, slot.speed
+            if speed > 1.005:
                 try:
-                    fast_tts: TTSResult = asyncio.run(
-                        self._engine.synthesize_one(vi_text, seg_id, rate=rate_str)
-                    )
-                    if fast_tts.duration <= extended_slot:
-                        results.append(FittingResult(
-                            id=seg_id, vi_text=vi_text, tts_path=fast_tts.wav_path,
-                            tts_duration=fast_tts.duration,
-                            final_start=seg_start,
-                            final_end=seg_start + fast_tts.duration,
-                            speed=tts_dur / fast_tts.duration,
-                            status="sped_up",
-                        ))
-                        continue
-                    tts_path = fast_tts.wav_path
-                    tts_dur = fast_tts.duration
+                    wav, dur = self._speed_up(line, speed)
                 except Exception as exc:
-                    log.warning("Rate re-synthesis failed for seg %d: %s", seg_id, exc)
-
-            if needed_ratio <= MAX_ATEMPO:
-                # 3b. Apply ffmpeg atempo
-                atempo = min(tts_dur / extended_slot, MAX_ATEMPO)
-                if atempo > 1.0:
-                    speed_path = self._speed_dir / f"{tts_path.stem}_x{atempo:.2f}.wav"
-                    try:
-                        _apply_atempo(self._ffmpeg, tts_path, speed_path, atempo)
-                        sped_dur = _wav_duration(speed_path)
-                        if sped_dur <= extended_slot:
-                            results.append(FittingResult(
-                                id=seg_id, vi_text=vi_text, tts_path=speed_path,
-                                tts_duration=sped_dur,
-                                final_start=seg_start,
-                                final_end=seg_start + sped_dur,
-                                speed=atempo, status="sped_up",
-                            ))
-                            continue
-                        tts_path = speed_path
-                        tts_dur = sped_dur
-                    except Exception as exc:
-                        log.warning("atempo failed for seg %d: %s", seg_id, exc)
-
-            # ── Step 4: shorten translation via optional callback ─────────────
-            if self._shortener is not None:
-                max_chars = max(8, int(extended_slot * 14))
-                try:
-                    short_text = self._shortener(vi_text, max_chars)
-                    if short_text and short_text != vi_text:
-                        short_tts = asyncio.run(
-                            self._engine.synthesize_one(short_text, seg_id)
-                        )
-                        if short_tts.duration <= extended_slot:
-                            results.append(FittingResult(
-                                id=seg_id, vi_text=short_text,
-                                tts_path=short_tts.wav_path,
-                                tts_duration=short_tts.duration,
-                                final_start=seg_start,
-                                final_end=seg_start + short_tts.duration,
-                                speed=1.0, status="shortened",
-                            ))
-                            continue
-                        tts_path = short_tts.wav_path
-                        tts_dur = short_tts.duration
-                        vi_text = short_text
-                except Exception as exc:
-                    log.warning("Shortener failed for seg %d: %s", seg_id, exc)
-
-            # ── Step 5: push next segment (accept overrun) ────────────────────
-            push = min(tts_dur - extended_slot, MAX_OVERFLOW_S)
-            if push > 0 and idx + 1 < n:
-                next_id = ids[idx + 1]
-                pushed_starts[next_id] = pushed_starts[next_id] + push
-                log.warning(
-                    "Seg %d overruns by %.2fs → pushing seg %d forward %.2fs",
-                    seg_id, tts_dur - extended_slot, next_id, push,
-                )
+                    log.warning("Speed-up failed for seg %d: %s", line.id, exc)
+                    speed = 1.0
+            else:
+                speed = 1.0
+            gap = _gap(prev_line)
+            start = max(line.start, prev_end + gap)
+            if line.shortened:
+                status = "shortened"
+            elif start - line.start > 0.05:
+                status = "late"
+            elif speed > 1.0:
+                status = "sped_up"
+            else:
+                status = "fits"
             results.append(FittingResult(
-                id=seg_id, vi_text=vi_text, tts_path=tts_path,
-                tts_duration=tts_dur,
-                final_start=seg_start, final_end=seg_start + tts_dur,
-                speed=tts_dur / slot_dur if slot_dur > 0 else 1.0,
-                status="pushed",
+                id=line.id, vi_text=line.text, tts_path=wav, tts_duration=dur,
+                final_start=start, final_end=start + dur, speed=speed, status=status,
             ))
-
+            prev_end, prev_line = start + dur, line
         return results
+
+    def _speed_up(self, line: _Line, speed: float) -> tuple[Path, float]:
+        """Line audio at *speed*: the engine's own rate first (sounds more natural), atempo
+        for what it falls short of — piper voices often follow length_scale only partly."""
+        src, dur = line.wav, line.dur
+        if getattr(self._engine, "supports_rate", True):
+            rate = f"+{math.ceil((speed - 1) * 100)}%"
+            tts = asyncio.run(self._engine.synthesize_one(line.text, line.id, rate=rate))
+            src, dur = self._trimmed(tts.wav_path)
+        rest = line.dur / speed
+        if dur <= rest * 1.01:
+            return src, dur
+        factor = min(dur / rest, MAX_SPEED)
+        dst = self._speed_dir / f"{src.stem}_x{factor:.3f}.wav"
+        if not dst.exists():
+            _apply_atempo(self._ffmpeg, src, dst, factor)
+        return dst, _wav_duration(dst)
+
+    def _trimmed(self, src: Path) -> tuple[Path, float]:
+        """*src* without the engine's leading / trailing silence (cached in speed_dir)."""
+        dst = self._speed_dir / f"{src.stem}_t.wav"
+        if not dst.exists():
+            samples, sr, width = _read_pcm(src)
+            _write_pcm(dst, trim_silence(samples, sr), sr, width)
+        return dst, _wav_duration(dst)
+
+
+# ── Planning (pure) ───────────────────────────────────────────────────────────
+
+def _gap(prev: "_Line | None") -> float:
+    if prev is None:
+        return 0.0
+    return SENTENCE_GAP if prev.ends_sentence else CLAUSE_GAP
+
+
+def plan_timeline(lines: list[_Line], video_duration: float, speed: float,
+                  max_speed: float = MAX_SPEED) -> list[_Slot]:
+    """Where each line goes when the whole video is sped up by *speed*.
+
+    A line starts at its Chinese time, or after the previous line + pause if that is
+    later. It must end early enough for the next line to start within MAX_LAG of its own
+    Chinese time; it is sped up (≤ max_speed) to get there, the rest is overflow.
+    A line that doesn't delay the next one at normal speed (a pause follows) isn't sped up.
+    """
+    slots: list[_Slot] = []
+    prev_end, prev = -math.inf, None
+    for i, line in enumerate(lines):
+        start = max(line.start, prev_end + _gap(prev))
+        if i + 1 < len(lines):
+            free_end = lines[i + 1].start - _gap(line)
+            limit = free_end + MAX_LAG
+        else:
+            free_end = limit = max(video_duration, line.end)
+        room = limit - start
+        if start + line.dur <= free_end:
+            s = 1.0
+        else:
+            s = speed if room <= 0 else max(speed, line.dur / room)
+            s = min(s, max_speed)
+        end = start + line.dur / s
+        slots.append(_Slot(start, s, end, max(0.0, end - limit)))
+        prev_end, prev = end, line
+    return slots
+
+
+def choose_speed(lines: list[_Line], video_duration: float) -> tuple[float, list[_Slot]]:
+    """Lowest even speed (≤ MAX_GLOBAL_SPEED) that keeps every line in its window.
+
+    When none does, the fastest — fewest leftovers to shorten or delay.
+    """
+    best = None
+    for step in range(int(round((MAX_GLOBAL_SPEED - 1) * 100)) + 1):
+        speed = 1 + step / 100
+        slots = plan_timeline(lines, video_duration, speed)
+        if sum(s.overflow for s in slots) <= 0.05:
+            return speed, slots
+        best = (speed, slots)
+    return best
+
+
+def trim_silence(samples: np.ndarray, sr: int) -> np.ndarray:
+    """Drop leading / trailing silence, keep EDGE_PAD around the speech, fade its edges."""
+    x = samples.astype(np.float32)
+    peak = float(np.abs(x).max()) if len(x) else 0.0
+    if peak == 0.0:
+        return samples
+    frame = max(1, sr // 100)
+    n = len(x) // frame
+    if n == 0:
+        return samples
+    rms = np.sqrt(np.mean(x[: n * frame].reshape(n, frame) ** 2, axis=1))
+    loud = np.where(rms > min(SILENCE_RMS, peak * 0.05))[0]   # quiet voices too
+    if len(loud) == 0:
+        return samples
+    pad = int(EDGE_PAD * sr)
+    a = max(0, loud[0] * frame - pad)
+    b = min(len(x), (loud[-1] + 1) * frame + pad)
+    out = samples[a:b].astype(np.float32)
+    fade = min(int(FADE_S * sr), len(out) // 2)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        out[:fade] *= ramp
+        out[-fade:] *= ramp[::-1]
+    return out
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -220,21 +326,37 @@ def _wav_duration(path: Path) -> float:
         return wf.getnframes() / wf.getframerate()
 
 
-def _apply_atempo(ffmpeg: Path, src: Path, dst: Path, factor: float) -> None:
-    """Apply FFmpeg atempo filter (0.5–2.0 range; chain for >2.0)."""
-    if factor <= 2.0:
-        filters = f"atempo={factor:.4f}"
+def _read_pcm(path: Path) -> tuple[np.ndarray, int, int]:
+    """Mono samples as float32 in −1…1, sample rate, sample width (bytes)."""
+    with wave.open(str(path), "rb") as wf:
+        sr, width, ch = wf.getframerate(), wf.getsampwidth(), wf.getnchannels()
+        raw = wf.readframes(wf.getnframes())
+    if width == 2:
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif width == 4:
+        x = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
     else:
-        # Chain: atempo=2.0,atempo=remainder
-        filters = f"atempo=2.0,atempo={factor/2.0:.4f}"
+        raise ValueError(f"Unsupported sample width: {width}")
+    if ch > 1:
+        x = x.reshape(-1, ch).mean(axis=1)
+    return x, sr, width
 
+
+def _write_pcm(path: Path, x: np.ndarray, sr: int, width: int = 2) -> None:
+    x = np.clip(x, -1.0, 1.0)
+    data = (x * 32767).astype(np.int16) if width == 2 else (x * 2147483647).astype(np.int32)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2 if width == 2 else 4)
+        wf.setframerate(sr)
+        wf.writeframes(data.tobytes())
+
+
+def _apply_atempo(ffmpeg: Path, src: Path, dst: Path, factor: float) -> None:
+    """FFmpeg atempo (0.5–2.0); keeps the source's sample rate."""
     subprocess.run(
-        [
-            str(ffmpeg), "-y", "-i", str(src),
-            "-filter:a", filters,
-            "-ac", "1", "-ar", "24000",
-            str(dst),
-        ],
+        [str(ffmpeg), "-y", "-i", str(src), "-filter:a", f"atempo={factor:.4f}",
+         "-ac", "1", "-c:a", "pcm_s16le", str(dst)],
         check=True,
         capture_output=True,
         **no_window(),
