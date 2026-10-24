@@ -28,6 +28,9 @@ class Pipeline:
         # review_translation(rows) -> list of Vietnamese texts (one per row): the user checks
         # / edits translate.json before TTS. None = no review step (run straight through)
         self.review_translation = None
+        # manual_translation(rows, duration) -> [{start, end, vi_text}] from a chatbot
+        # (translator "ai_manual"); None = not available (CLI)
+        self.manual_translation = None
         # Music separation quality (MDX-Net chunk overlap, separate.OVERLAPS)
         from dubber.core.audio.separate import DEFAULT_OVERLAP
         self.sep_overlap = DEFAULT_OVERLAP
@@ -316,6 +319,8 @@ class Pipeline:
         tts_engine: str = "piper",
         logo: "dict | None" = None,
         dub_voice: bool = True,
+        flip: bool = False,
+        music: "dict | None" = None,
     ) -> tuple[Path, Path, "Path | None", Path, Path]:
         """M5: run_m3 → subtitles (.ass) → render final output.mp4 (from the source video;
         M4's dubbed.mp4 isn't needed).
@@ -439,6 +444,13 @@ class Pipeline:
             effective_volume = _voice_vol if _voice_vol > 0 else 0.20
 
         logo_arg = _logo_arg(logo, w, h)
+        music_arg = None
+        if music and music.get("path") and Path(music["path"]).exists():
+            music_arg = (Path(music["path"]), max(0.0, music.get("volume", 30) / 100),
+                         video_info.duration)
+            log.info("Your music: %s at %d%%", Path(music["path"]).name, music.get("volume", 30))
+        elif music and music.get("path"):
+            log.warning("Music file missing — exported without it: %s", music["path"])
 
         output_mp4 = self.job_dir / "output.mp4"
         log.info("=== M5 render start ===")
@@ -460,6 +472,8 @@ class Pipeline:
             audio_bitrate=audio_bitrate,
             fonts_dir=fonts_dir(),
             logo=logo_arg,
+            flip=flip,
+            music=music_arg,
         )
         log.info("=== M5 done → %s ===", output_mp4)
         return asr_json, translate_json, dub_wav, subs_ass, output_mp4
@@ -530,6 +544,11 @@ class Pipeline:
             self._review(translate_json, stored, sig)
             return asr_json, translate_json
 
+        if translator == "ai_manual":
+            self._translate_manually(input_path, asr_json, translate_json, stored, sig)
+            self._review(translate_json, stored, sig)
+            return asr_json, translate_json
+
         raw = json.loads(asr_json.read_text(encoding="utf-8"))
         asr_segments = [ASRSegment(start=r["start"], end=r["end"], text=r["src_text"] if "src_text" in r else r["text"]) for r in raw]
 
@@ -561,6 +580,37 @@ class Pipeline:
         self._review(translate_json, stored, sig)
         return asr_json, translate_json
 
+    def _translate_manually(self, input_path: Path, asr_json: Path, translate_json: Path,
+                            stored: Path, sig: dict) -> None:
+        """Chinese lines + times → the user's chatbot → its lines, merged / split / timed as
+        it chose, replace the ASR segmentation (TTS and subtitles follow them)."""
+        import json
+        import shutil
+
+        from dubber.core.translate.manual import to_translate_rows
+        from dubber.core.translate.normalize_vi import normalize_text
+        if self.manual_translation is None:
+            raise RuntimeError("Dịch thủ công cần mở bằng giao diện (dán kết quả AI)")
+        raw = json.loads(asr_json.read_text(encoding="utf-8"))
+        rows = [{"id": i, "start": r["start"], "end": r["end"],
+                 "src_text": r.get("src_text", r.get("text", ""))} for i, r in enumerate(raw)]
+        duration = self._extractor.probe(input_path).duration
+        log.info("=== M2 manual translation: %d Chinese lines → chatbot ===", len(rows))
+        segs = self.manual_translation(rows, duration)
+        if not segs:
+            raise RuntimeError("Chưa có bản dịch từ AI")
+        data = to_translate_rows(segs, rows)
+        for d in data:
+            d["vi_text"] = normalize_text(d["vi_text"], d["src_text"])
+        translate_json.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
+        write_sig(translate_json, sig)
+        stored.parent.mkdir(exist_ok=True)
+        shutil.copyfile(translate_json, stored)
+        write_sig(stored, sig)
+        log.info("=== M2 manual done: %d Chinese lines → %d Vietnamese lines ===",
+                 len(rows), len(data))
+
     def _review(self, translate_json: Path, stored: Path, sig: dict) -> None:
         """Let the user check / edit the translation; edits also replace the stored copy,
         so a rerun with the same translator starts from the reviewed text."""
@@ -572,6 +622,21 @@ class Pipeline:
         from dubber.core.translate.normalize_vi import normalize_text
         rows = json.loads(translate_json.read_text(encoding="utf-8"))
         edited = self.review_translation([dict(r) for r in rows])
+        if isinstance(edited, dict) and edited.get("rows"):
+            # a chatbot merged / split the lines: they replace the segmentation
+            new = [{"id": i, "start": r["start"], "end": r["end"],
+                    "src_text": r.get("src_text", ""),
+                    "vi_text": normalize_text(r.get("vi_text", ""), r.get("src_text", ""))}
+                   for i, r in enumerate(edited["rows"])]
+            translate_json.write_text(json.dumps(new, ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+            write_sig(translate_json, sig)
+            stored.parent.mkdir(exist_ok=True)
+            shutil.copyfile(translate_json, stored)
+            write_sig(stored, sig)
+            log.info("Review: %d lines → %d lines (merged / split by a chatbot)",
+                     len(rows), len(new))
+            return
         changed = 0
         for row, vi in zip(rows, edited or []):
             vi = normalize_text(vi, row.get("src_text", ""))

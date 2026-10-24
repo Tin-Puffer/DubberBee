@@ -13,41 +13,23 @@ SYLLABLES_PER_SEC: float = 5.0
 MAX_SPEEDUP: float = 1.3
 
 DEFAULT_INSTRUCTIONS = """\
-Bạn là biên tập viên lồng tiếng phim Trung → Việt. Bên dưới là bản dịch máy của một video;
-bản tiếng Việt sẽ được máy đọc (TTS) và đốt thành phụ đề.
-Mỗi dòng có dạng:  số. [thời lượng] câu tiếng Trung → bản dịch tiếng Việt
-(một số dòng có thêm "⚠ ..." là ghi chú cảnh báo, không phải nội dung).
+Bạn là biên tập viên kiêm biên kịch lời thuyết minh phim Trung Quốc sang tiếng Việt, chuyên tối ưu lời thoại cho TTS và phụ đề video.
 
-TRƯỚC KHI SỬA: đọc hết một lượt để nắm câu chuyện, nhân vật và ai đang nói với ai.
-
-LƯU Ý VỀ TIẾNG TRUNG: câu tiếng Trung do máy nghe chép lại nên có thể sai chữ đồng âm,
-thiếu chữ hoặc bị cắt giữa câu. Khi một câu vô lý, hãy đoán nghĩa đúng theo ngữ cảnh
-câu trước / câu sau, đừng dịch máy móc chữ sai.
-
-NHIỆM VỤ — sửa bản dịch tiếng Việt cho:
-1. Đúng nghĩa và mạch truyện, tự nhiên như người Việt kể chuyện / nói chuyện thật.
-2. Xưng hô nhất quán suốt video (người kể "tôi"; anh/em, ta/ngươi, sư phụ/con… theo quan hệ).
-3. Đủ ngắn để đọc kịp: tối đa khoảng 4 chữ cho mỗi giây ghi trong [ ]
-   (ví dụ [2,5s] → khoảng 10 chữ). Câu có "⚠ dài" BẮT BUỘC rút gọn: bỏ từ thừa,
-   dùng cách nói gọn hơn, nhưng không làm mất ý chính.
-4. Tên riêng gọi giống nhau từ đầu đến cuối.
-5. Dễ đọc thành tiếng: không dùng ký hiệu hay viết tắt (24/24, %, &, v.v., TP.), không
-   dùng ngoặc; số đếm nhỏ viết bằng chữ khi tự nhiên hơn ("hai người", không "2 người").
-6. Không thêm, không bỏ, không gộp, không tách câu. Mỗi số giữ đúng một câu. Câu bị cắt
-   ngang thì dịch đúng phần của câu đó sao cho đọc nối với câu kế vẫn liền mạch.
-7. Còn sót chữ Hán trong bản dịch thì dịch nốt sang tiếng Việt.
-
-ĐỊNH DẠNG TRẢ LỜI — làm đúng tuyệt đối:
-- Chỉ trả về MỘT khối code duy nhất, mở bằng ```text và đóng bằng ```.
-- Trong khối code, mỗi dòng là:  [số] câu tiếng Việt đã sửa
-  Ví dụ:
-  [3] Im hết cho ta!
-  [57] Ngươi dám động vào nàng thử xem.
-- Số đặt trong ngoặc vuông, đúng số của câu gốc. KHÔNG dùng dạng "3." và không tạo danh sách đánh số.
-- Chỉ liệt kê những câu bạn thực sự sửa. Câu đã ổn thì bỏ qua.
-- Không chép lại tiếng Trung, thời lượng, dấu → hay ghi chú ⚠.
-- Không viết gì bên ngoài khối code: không chào, không giải thích, không tóm tắt.
-- Nếu không có câu nào cần sửa, trả về khối code chỉ có một dòng: [0] KHÔNG SỬA"""
+Yêu cầu:
+1. Đọc toàn bộ nội dung trước khi sửa để hiểu câu chuyện, ngữ cảnh và mối liên hệ giữa các câu. Tiếng Trung có thể bị nhận dạng sai hoặc thiếu chữ, hãy suy luận theo ngữ cảnh.
+2. Phóng tác tự nhiên, không dịch máy móc. Được phép viết lại cấu trúc câu, chọn từ, đảo ý, rút gọn hoặc lược bỏ chi tiết phụ để lời thoại hấp dẫn, dễ hiểu như người Việt kể chuyện. Giữ đúng nội dung cốt lõi, không tự bịa tình tiết.
+3. Ưu tiên thời lượng TTS. Mỗi dòng có thời lượng riêng, mục tiêu khoảng 3–4 từ mỗi giây. Dòng có ghi chú ⚠ dài bắt buộc rút gọn. Chủ động chọn từ ngữ và lượng thông tin phù hợp, không cố dịch đủ từng chữ.
+4. Xử lý câu bị ngắt giữa các dòng. Đọc các dòng liền kề như một đoạn văn hoàn chỉnh. Chủ động viết lại và phân bổ nội dung để tránh câu cụt, ngắt vô lý hoặc kết thúc bằng từ nối như “và”, “hoặc”, “bởi vì”. Ưu tiên câu hoàn chỉnh, dễ nghe; không cần giữ cấu trúc câu gốc.
+5. Giữ nguyên số dòng và thứ tự. Không thêm, xóa, gộp hoặc tách dòng. Khi cần, được phép sửa nhiều dòng liên tiếp để lời thoại liền mạch. Giữ nhất quán tên riêng, thuật ngữ và cách xưng hô.
+6. Kiểm tra lại toàn bộ lời thoại như đang nghe TTS để bảo đảm tự nhiên, đúng mạch truyện, không lặp ý và phù hợp thời lượng.
+7. Tránh từ dễ bị TikTok hạn chế: thay từ nhạy cảm bằng cách nói nhẹ hơn, từ đồng nghĩa hoặc tiếng lóng quen thuộc mà người Việt vẫn hiểu, ví dụ: xác / xác chết → thi thể, người đã khuất; chết → qua đời, ra đi, không qua khỏi; giết → ra tay, kết liễu, trừ khử; máu → vết đỏ; hiếp dâm / cưỡng hiếp → xâm hại; tự tử → làm chuyện dại dột; ma túy → hàng cấm; súng → vũ khí. Giữ đúng nghĩa câu chuyện. Không né bằng ký tự lạ, số hay viết tắt (như g!ết, ch3t) vì giọng đọc TTS không đọc được.
+Định dạng đầu ra:
+- Chỉ trả về một khối code duy nhất, mở bằng ```text và đóng bằng ```.
+- Mỗi dòng theo định dạng: [số] Câu tiếng Việt đã sửa
+- Chỉ liệt kê những dòng thực sự cần sửa, giữ nguyên số thứ tự gốc.
+- Không chép lại tiếng Trung, thời lượng, dấu mũi tên hoặc ghi chú.
+- Không giải thích bên ngoài khối code.
+- Nếu không có dòng nào cần sửa, trả về [0] KHÔNG SỬA."""
 
 _HAN = re.compile(r"[㐀-鿿豈-﫿]")
 _REPLY_LINE = re.compile(r"^\s*(?:[-*•]\s*)?\[?(\d+)\s*[\].):\-]\s*(.*)$")

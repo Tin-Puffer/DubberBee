@@ -78,6 +78,9 @@ def paint_preview(frame: Path, video_w: int, video_h: int, layout: dict, show_su
     if pix.isNull():
         return pix
     pix = pix.scaledToWidth(width, Qt.SmoothTransformation)
+    if layout.get("flip"):            # mirrored before blur / logo / subtitles, as exported
+        from PySide6.QtGui import QTransform
+        pix = pix.transformed(QTransform().scale(-1, 1))
     W, H = pix.width(), pix.height()
     vw, vh = (video_w or W), (video_h or H)
     scale = H / vh

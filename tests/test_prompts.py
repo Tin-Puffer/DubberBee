@@ -82,3 +82,10 @@ def test_review_dialog_copies_with_the_saved_prompt(qapp):
     dlg = ReviewDialog("v.mp4", [dict(ROWS[0])])
     dlg._copy([1])
     assert QGuiApplication.clipboard().text().startswith("Dịch kiểu kiếm hiệp.\n\n1. [1,0s] 你好")
+
+
+def test_translation_prompts_soften_words_tiktok_restricts():
+    from dubber.core.translate.prompts import default_prompt
+    for kind in ("review", "review_timed", "manual"):
+        p = default_prompt(kind)
+        assert "TikTok hạn chế" in p and "giết → ra tay" in p and "TTS không đọc được" in p, kind

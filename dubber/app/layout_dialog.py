@@ -52,7 +52,8 @@ def probe_video(path: Path) -> tuple[int, int, float]:
 def render_preview(path: Path, t: float, w: int, h: int, *, font: str, size: int,
                    sub_pos, blur_mode: str, blur_rect, color: str = "#FFFFFF",
                    outline_color: str = "#000000", outline: float = 2.0, box: bool = False,
-                   blur_pad: int = 12, logo: "dict | None" = None) -> QImage:
+                   blur_pad: int = 12, logo: "dict | None" = None,
+                   flip: bool = False) -> QImage:
     """One frame at t with the sample subtitle + blur + logo exactly as the export
     renders them."""
     from dubber.core.pipeline import _logo_arg, compute_auto_blur, make_sub_style, _norm_rect_to_px
@@ -73,6 +74,9 @@ def render_preview(path: Path, t: float, w: int, h: int, *, font: str, size: int
         esc = lambda p: str(p).replace("\\", "/").replace(":", "\\:")  # noqa: E731
         # Same layer order as render_final: frame → blur → logo → subtitles
         parts, cur = [], "[0:v]"
+        if flip:                      # mirrored first, like render_final
+            parts.append("[0:v]hflip[mirrored]")
+            cur = "[mirrored]"
         if area:
             bx, by, bw, bh = area
             r = max(3, min(15, bw // 4, bh // 4))  # same radius rule as render_final
@@ -364,9 +368,10 @@ class LayoutDialog(QDialog):
                  font_family: str = DEFAULT_FONT, font_size: int = DEFAULT_FONT_SIZE,
                  blur_mode: str = "auto", style: "dict | None" = None,
                  video_info: "tuple[int, int, float] | None" = None,
-                 logo: "dict | None" = None):
+                 logo: "dict | None" = None, flip: bool = False):
         super().__init__(parent)
         self._logo = dict(logo) if logo and logo.get("path") else None
+        self._flip = flip
         self.setWindowTitle(f"Chỉnh trên khung hình — {video_path.name}")
         self._path = video_path
         self._blur_mode = blur_mode       # off / auto / custom — dragging a box picks custom
@@ -588,7 +593,7 @@ class LayoutDialog(QDialog):
             blur_mode=self._effective_blur_mode(), blur_rect=self.canvas.blur_rect,
             color=s.get("color", "#FFFFFF"), outline_color=s.get("outline_color", "#000000"),
             outline=s.get("outline", 2.0), box=s.get("box", False), blur_pad=s.get("blur_pad", 12),
-            logo=self.logo,
+            logo=self.logo, flip=self._flip,
         )
         t = self._slider.value() / 10
         self._rendering = True

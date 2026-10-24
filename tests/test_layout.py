@@ -89,7 +89,7 @@ def app():
 
 
 _STYLE_DEFAULTS = {"sub_color": "#FFFFFF", "sub_outline_color": "#000000", "sub_outline": 2,
-                   "sub_box": False, "blur_pad": 12, "logo": None}
+                   "sub_box": False, "blur_pad": 12, "logo": None, "flip": False}
 
 
 def test_layout_kwargs_mapping():
@@ -316,3 +316,35 @@ def test_vietnamese_voice_can_be_turned_off(app):
     old = {k: v for k, v in cfg.items() if k != "vi_on"}       # saved before the option
     b.set_config(old)
     assert b.get_config()["vi_on"] is True
+
+
+def test_flip_option_roundtrip_and_layout(app):
+    from dubber.app.gui import OptionsPanel, _layout_kwargs
+    a = OptionsPanel()
+    assert a.get_config()["flip_h"] is False and _layout_kwargs(a.get_config())["flip"] is False
+    seen = []
+    a.preview_changed.connect(lambda: seen.append(1))
+    a._chk_flip.setChecked(True)
+    cfg = a.get_config()
+    assert cfg["flip_h"] is True and _layout_kwargs(cfg)["flip"] is True and seen
+    b = OptionsPanel()
+    b.set_config(cfg)
+    assert b.get_config()["flip_h"] is True
+    b.set_config({k: v for k, v in cfg.items() if k != "flip_h"})   # older config
+    assert b.get_config()["flip_h"] is False
+
+
+def test_quick_preview_is_mirrored(app, tmp_path):
+    from PySide6.QtGui import QColor, QImage
+    from dubber.app.preview import paint_preview
+    img = QImage(64, 36, QImage.Format_RGB32)
+    img.fill(QColor("black"))
+    for y in range(36):
+        for x in range(16):
+            img.setPixelColor(x, y, QColor("red"))          # red strip on the left
+    frame = tmp_path / "f.png"
+    img.save(str(frame))
+    base = {"blur_mode": "off", "sub_pos": None}
+    left = paint_preview(frame, 64, 36, {**base, "flip": False}, False, width=64).toImage()
+    right = paint_preview(frame, 64, 36, {**base, "flip": True}, False, width=64).toImage()
+    assert left.pixelColor(2, 18).red() > 200 and right.pixelColor(61, 18).red() > 200

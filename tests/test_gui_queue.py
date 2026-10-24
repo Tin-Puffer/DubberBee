@@ -46,13 +46,15 @@ class _FakeWorker(QObject):
 
     def run(self):
         _FakeWorker.runs.append((self.input_path.name, self.kw))
-        if self.input_path.stem in ("ratelimit", "review"):   # waits on the user
-            kind = {"ratelimit": "rate_limit", "review": "review"}[self.input_path.stem]
+        if self.input_path.stem in ("ratelimit", "review", "manual"):   # waits on the user
+            kind = {"ratelimit": "rate_limit", "review": "review",
+                    "manual": "manual"}[self.input_path.stem]
             self.ask.emit(kind, {"video": self.input_path.name, "script": Path("x_zh.txt"),
                                  "count": 3, "can_reuse": False, "error": None,
                                  "wait": 12, "done": 1, "total": 3, "again": False,
                                  "can_local": True, "rows": [], "audio": None,
-                                 "work_dir": None, "tts_engine": "piper", "voice": None})
+                                 "work_dir": None, "tts_engine": "piper", "voice": None,
+                                 "duration": 10.0})
             end = time.time() + 10
             while not (self._answered or self._cancel) and time.time() < end:
                 time.sleep(0.01)
@@ -957,7 +959,7 @@ def test_review_dialog_answer_reaches_worker(win, tmp_path, monkeypatch):
     import dubber.app.review_dialog as rd
 
     class AutoDialog:
-        def __init__(self, *a, **k): self.result_vi = ["Một.", "Hai."]
+        def __init__(self, *a, **k): self.result_vi = self.result = ["Một.", "Hai."]
         def exec(self): return gui.QDialog.Accepted
         def deleteLater(self): pass
     monkeypatch.setattr(rd, "ReviewDialog", AutoDialog)
@@ -974,7 +976,7 @@ def test_review_dialog_cancel_cancels_video(win, tmp_path, monkeypatch):
     import dubber.app.review_dialog as rd
 
     class CancelDialog:
-        def __init__(self, *a, **k): self.result_vi = None
+        def __init__(self, *a, **k): self.result_vi = self.result = None
         def exec(self): return gui.QDialog.Rejected
         def deleteLater(self): pass
     monkeypatch.setattr(rd, "ReviewDialog", CancelDialog)
@@ -1092,3 +1094,33 @@ def test_logo_of_a_queued_video_becomes_the_remembered_one(tmp_path, monkeypatch
     assert settings.load_settings()["last_logo"]["logo_path"] == str(img)
     assert gui.OptionsPanel().get_config()["logo_size"] == 15   # new videos get it
     w2.close()
+
+
+def test_manual_translation_dialog_answer_reaches_worker(win, tmp_path, monkeypatch):
+    import dubber.app.manual_dialog as md
+    segs = [{"start": 0.0, "end": 2.0, "vi_text": "Một câu gộp."}]
+
+    class AutoDialog:
+        def __init__(self, video, rows, duration, parent=None):
+            assert duration == 10.0
+            self.segments = segs
+        def exec(self): return gui.QDialog.Accepted
+        def deleteLater(self): pass
+    monkeypatch.setattr(md, "ManualTranslateDialog", AutoDialog)
+    _FakeWorker.answers = []
+    (m,) = _videos(tmp_path, "manual.mp4")
+    win._add_files([m])
+    win._start()
+    _wait_idle(win)
+    assert _FakeWorker.answers == [segs] and win._jobs[0].status == "done"
+
+
+def test_ai_manual_translator_is_offered_and_kept(win, tmp_path):
+    (a,) = _videos(tmp_path, "a.mp4")
+    win._add_files([a])
+    combo = win._opts._combo_translator
+    assert combo.findData("ai_manual") >= 0
+    gui._select_data(combo, "ai_manual")
+    win._start()
+    _wait_idle(win)
+    assert _FakeWorker.runs[-1][1]["translator"] == "ai_manual"

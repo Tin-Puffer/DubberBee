@@ -129,6 +129,7 @@ def test_dialog_edit_paste_undo_continue(qapp, monkeypatch):
     class AutoPaste:
         def __init__(self, vi, text, parent=None):
             self.changes = dict(parse_chatbot_reply(text, len(vi))[0])
+            self.timed_text = ""
         def exec(self): return rd.QDialog.Accepted
     monkeypatch.setattr(rd, "PasteReplyDialog", AutoPaste)
     dlg._paste()
@@ -182,3 +183,86 @@ def test_paste_ignores_our_own_copy_on_the_clipboard(qapp, monkeypatch):
     dlg._copy([1, 2, 3, 4])
     dlg._paste()
     assert seen == [""]
+
+
+
+# ── merge / split replies (Tự động / Groq / MarianMT / NLLB) ──────────────────
+
+def _review_dialog(qapp, monkeypatch):
+    import dubber.app.review_dialog as rd
+    rows = [{"id": i, "start": s, "end": e, "src_text": zh, "vi_text": vi}
+            for i, (s, e, zh, vi) in enumerate([
+                (0.0, 2.0, "我来了", "Tôi đến rồi."),
+                (2.0, 4.0, "你是谁", "Anh là ai?"),
+                (5.0, 8.0, "门开了，一个人走进来", "Cửa mở, một người bước vào.")])]
+    return rd, rd.ReviewDialog("v.mp4", rows, duration=10.0)
+
+
+def test_copy_chinese_only_has_times_and_its_own_prompt(qapp, monkeypatch):
+    from PySide6.QtGui import QGuiApplication
+    from dubber.core.translate.prompts import default_prompt
+    rd, dlg = _review_dialog(qapp, monkeypatch)
+    dlg._copy_timed()
+    text = QGuiApplication.clipboard().text()
+    assert text.startswith(default_prompt("review_timed").strip()[:40])
+    assert "[3] 00:05.00 → 00:08.00 | 门开了，一个人走进来" in text
+    assert "Tôi đến rồi" not in text                     # no Vietnamese in this copy
+    dlg.reject()
+
+
+def test_pasting_a_timed_reply_rebuilds_the_table_and_undo_restores_it(qapp, monkeypatch):
+    rd, dlg = _review_dialog(qapp, monkeypatch)
+    monkeypatch.setattr(rd.QGuiApplication.clipboard(), "text", lambda: (
+        "[00:00.00 → 00:04.00] Tôi đến rồi, còn anh là ai?\n"
+        "[00:05.00 → 00:06.40] Cửa mở.\n"
+        "[00:06.50 → 00:08.00] Một người bước vào."))
+    import dubber.app.manual_dialog as md
+
+    class AutoApply:
+        def __init__(self, duration, n, text, parent=None):
+            assert duration == 10.0 and n == 3
+            from dubber.core.translate.manual import parse_manual_reply
+            self.segments = parse_manual_reply(text, duration)[0]
+        def exec(self): return rd.QDialog.Accepted
+    monkeypatch.setattr(md, "TimedReplyDialog", AutoApply)
+    dlg._paste()
+    assert dlg._table.rowCount() == 3 and dlg._vi[0] == "Tôi đến rồi, còn anh là ai?"
+    assert [r["start"] for r in dlg._rows] == [0.0, 5.0, 6.5]
+    assert dlg._rows[0]["src_text"] == "我来了你是谁"            # merged: both Chinese lines
+    dlg._undo_last()
+    assert dlg._vi == ["Tôi đến rồi.", "Anh là ai?", "Cửa mở, một người bước vào."]
+    dlg._redo = None
+    dlg.apply_segments([{"start": 0.0, "end": 4.0, "vi_text": "Gộp."},
+                        {"start": 5.0, "end": 8.0, "vi_text": "Cửa mở."}])
+    dlg._continue()
+    assert dlg.result == {"rows": [
+        {"id": 0, "start": 0.0, "end": 4.0, "src_text": "我来了你是谁", "vi_text": "Gộp."},
+        {"id": 1, "start": 5.0, "end": 8.0, "src_text": "门开了，一个人走进来", "vi_text": "Cửa mở."}]}
+
+
+def test_text_only_edits_still_return_a_list(qapp, monkeypatch):
+    rd, dlg = _review_dialog(qapp, monkeypatch)
+    dlg._continue()
+    assert dlg.result == ["Tôi đến rồi.", "Anh là ai?", "Cửa mở, một người bước vào."]
+
+
+def test_pipeline_review_can_restructure_the_lines(tmp_path):
+    from pathlib import Path
+    from dubber.core.pipeline import Pipeline
+    from dubber.core.utils.job_cache import sig_matches, write_sig
+    job = tmp_path / "job"
+    (job / "translations").mkdir(parents=True)
+    rows = [{"id": 0, "start": 0.0, "end": 2.0, "src_text": "我来了", "vi_text": "Tôi đến."},
+            {"id": 1, "start": 2.0, "end": 4.0, "src_text": "你是谁", "vi_text": "Ai?"}]
+    tj, stored = job / "translate.json", job / "translations" / "groq.json"
+    tj.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    sig = {"asr": "x", "translator": "groq"}
+    write_sig(tj, sig)
+    p = Pipeline(Path("ffmpeg"), Path("ffprobe"), job)
+    p.review_translation = lambda r: {"rows": [
+        {"start": 0.0, "end": 4.0, "src_text": "我来了你是谁", "vi_text": "tôi đến , anh là ai"}]}
+    p._review(tj, stored, sig)
+    data = json.loads(tj.read_text(encoding="utf-8"))
+    assert len(data) == 1 and data[0]["id"] == 0 and data[0]["end"] == 4.0
+    assert data[0]["vi_text"].startswith("Tôi đến, anh là ai")
+    assert sig_matches(stored, sig) and json.loads(stored.read_text(encoding="utf-8")) == data

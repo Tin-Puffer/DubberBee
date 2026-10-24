@@ -78,6 +78,7 @@ dubber/
 │   ├── prompt_dialog.py     # soạn prompt AI (sửa bản dịch / TikTok): lưu, khôi phục mặc định
 │   ├── preview.py           # khung hình + phụ đề mẫu (gần đúng) trong "Thông tin video gốc"
 │   ├── notify.py            # thông báo hệ thống + Dock khi xong / lỗi / cần người dùng
+│   ├── manual_dialog.py     # dịch thủ công: tiếng Trung + giờ, sao chép cho AI, dán + kiểm tra kết quả
 │   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
 └── core/
     ├── pipeline.py          # run_m5() — điều phối toàn bộ pipeline
@@ -93,6 +94,9 @@ dubber/
     │   ├── local_translator.py  # MarianMT / NLLB 1.3B / AutoTranslator
     │   ├── normalize_vi.py  # chuẩn hóa bản dịch (viết hoa, dấu câu, tên riêng Groq)
     │   ├── review.py        # câu cần chú ý, định dạng copy/dán kết quả AI
+    │   ├── manual.py        # dịch thủ công "ai_manual": tiếng Trung + giờ → AI gộp/tách câu, tự đặt giờ
+    │   │                    # → parse "[mm:ss.cc → mm:ss.cc] câu" thay hẳn cách chia câu của ASR;
+    │   │                    # bảng duyệt (mọi bộ dịch) cũng nhận dạng này qua "Copy chỉ tiếng Trung"
     │   ├── tiktok.py        # prompt TikTok + lời thoại → <video>_vi.txt cạnh video xuất
     │   ├── prompts.py       # prompt AI người dùng sửa được (settings.json; mặc định / reset)
     │   └── gemini.py        # Gemini (dự phòng)
@@ -106,6 +110,7 @@ dubber/
     │   │                    # mọi câu về cùng độ to −14 dBFS (piper/VieNeu lệch ~7 dB) + limiter mềm,
     │   │                    # tăng tốc đều ≤1,15× (1 câu ≤1,3×), trễ ≤1,5s; câu quá dài → Groq rút gọn
     │   ├── mixer.py         # build_dub_wav(): ghép dub.wav đúng sample rate của giọng (không resample)
+    │   ├── music.py         # "Nhạc của bạn": file chép vào user-data/music, lặp + nhỏ dần cuối khi render
     │   └── separate.py      # tách nhạc nền (audio-separator, hoặc FFmpeg fallback); chất lượng = overlap
     │                        # theo từng video (0,1/0,25/0,5 mặc định/0,75), đổi mức chỉ tách lại, giữ ASR/dịch;
     │                        # hàng đợi tách trước video kế khi video đang chạy đã dịch xong
@@ -113,7 +118,7 @@ dubber/
     │   ├── subtitles.py     # build_ass(): cắt câu thành dòng 1 dòng, viền/màu chữ
     │   ├── text_metrics.py  # đo chữ như libass (Pillow + bảng OS/2 của font)
     │   ├── logo.py          # logo kênh: ảnh chép vào user-data/logos (PNG), cỡ % rộng, góc / tự chọn
-    │   └── render.py        # render_final() — ghép video + subtitle + logo + audio (FFmpeg);
+    │   └── render.py        # render_final() — (lật ngang) + làm mờ + logo + subtitle + audio (FFmpeg);
     │                        # dub_wav=None = chỉ phụ đề (không giọng Việt), không âm thanh nào = -an
     └── utils/
         ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH

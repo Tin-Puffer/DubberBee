@@ -21,6 +21,7 @@ _BTN = ("QPushButton { background: #262626; color: #ccc; border: 1px solid #333;
 
 _TRANSLATORS = {"auto": "Tự động", "groq": "Groq", "local": "MarianMT", "nllb": "NLLB"}
 _WAITING = {"review": "Đang chờ bạn duyệt bản dịch",
+            "manual": "Đang chờ bạn dán bản dịch từ AI",
             "rate_limit": "Groq rate limit — chờ bạn chọn cách xử lý"}
 
 # Actions per state: (key, button text, tooltip)

@@ -175,6 +175,8 @@ class VideoRenderer:
         encoder_preset: str = "medium",
         audio_bitrate: str = "192k",
         logo: "tuple | None" = None,
+        flip: bool = False,
+        music: "tuple | None" = None,
     ) -> Path:
         """M5: burn subtitles + blur band into video, mix audio, re-encode.
 
@@ -190,6 +192,10 @@ class VideoRenderer:
             target_video_kbps: Encode video at this bitrate (0 = use CRF 28 fallback).
             fonts_dir: Directory with bundled fonts for ASS renderer.
             logo: (image, x, y, w, h, opacity 0–1) — channel logo, under the subtitles.
+            flip: mirror the picture horizontally first — blur / logo / subtitle positions
+                  are picked on the mirrored preview, so they apply after it.
+            music: (file, volume 0–1, video seconds) — the user's own music, looped to the
+                   video's length and faded out at the end, mixed with the other tracks.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         encoder = _detect_hw_encoder(self._ffmpeg)
@@ -198,17 +204,19 @@ class VideoRenderer:
         # ── Inputs: 0 video, then whichever of dub / background / logo are used ──
         use_bg = bool(background_wav) and orig_volume > 0
         inputs = ["-i", str(video_path)]
-        dub_idx = bg_idx = logo_idx = None
-        for path, used in ((dub_wav, bool(dub_wav)), (background_wav, use_bg),
-                           (logo[0] if logo else None, bool(logo))):
-            if used:
-                inputs += ["-i", str(path)]
+        dub_idx = bg_idx = music_idx = logo_idx = None
         n = 1
         if dub_wav:
+            inputs += ["-i", str(dub_wav)]
             dub_idx, n = n, n + 1
         if use_bg:
+            inputs += ["-i", str(background_wav)]
             bg_idx, n = n, n + 1
+        if music:
+            inputs += ["-stream_loop", "-1", "-i", str(music[0])]   # loops; trimmed below
+            music_idx, n = n, n + 1
         if logo:
+            inputs += ["-i", str(logo[0])]
             logo_idx = n
 
         # ── Build filter_complex ──────────────────────────────────────────────
@@ -218,6 +226,9 @@ class VideoRenderer:
 
         vf_parts: list[str] = []
         current = "[0:v]"
+        if flip:
+            vf_parts.append("[0:v]hflip[mirrored]")
+            current = "[mirrored]"
 
         # Blur boxes: each entry is (start_sec, end_sec, x, y, w, h).
         # ONE crop/blur over the union rectangle, shown while any subtitle is on screen.
@@ -269,20 +280,28 @@ class VideoRenderer:
         # Audio: background (separated stems, or the original track) + the Vietnamese
         # dub, whichever are on; nothing on → a silent video. loudnorm resamples to 192 kHz,
         # which AAC can't take: back to 48 kHz.
-        tracks = []
+        tracks = []   # (label, filter chain)
         if use_bg:
-            tracks.append(f"[{bg_idx}:a]volume={orig_volume}")
+            tracks.append(("bg_a", f"[{bg_idx}:a]volume={orig_volume}"))
         elif orig_volume > 0:
-            tracks.append(f"[0:a]volume={orig_volume}")
+            tracks.append(("bg_a", f"[0:a]volume={orig_volume}"))
         if dub_wav:
-            tracks.append(f"[{dub_idx}:a]volume={vi_volume}")
+            tracks.append(("dub_a", f"[{dub_idx}:a]volume={vi_volume}"))
+        if music:
+            from dubber.core.audio.music import FADE_OUT_S
+            _, m_vol, seconds = music
+            fade_at = max(0.0, seconds - FADE_OUT_S)
+            tracks.append(("music_a", f"[{music_idx}:a]volume={m_vol},atrim=0:{seconds:.3f},"
+                                      f"asetpts=PTS-STARTPTS,afade=t=out:st={fade_at:.3f}"
+                                      f":d={FADE_OUT_S}"))
         norm = "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[aout]"
-        if len(tracks) == 2:
-            af = (f"{tracks[0]}[bg_a];{tracks[1]}[dub_a];"
-                  f"[bg_a][dub_a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        if len(tracks) > 1:
+            af = (";".join(f"{chain}[{label}]" for label, chain in tracks) + ";"
+                  + "".join(f"[{label}]" for label, _ in tracks)
+                  + f"amix=inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0,"
                   + norm)
         elif tracks:
-            af = f"{tracks[0]}," + norm
+            af = f"{tracks[0][1]}," + norm
         else:
             af = None
 

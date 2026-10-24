@@ -244,7 +244,7 @@ class SettingsDialog(QDialog):
                       else "Thông báo hệ thống + biểu tượng Dock")
                      + " — chỉ khi bạn đang ở cửa sổ khác.")
 
-        self.prompt_rows = {k: PromptRow(k, self) for k in ("review", "tiktok")}
+        self.prompt_rows = {k: PromptRow(k, self) for k in ("review", "review_timed", "manual", "tiktok")}
         section("Prompt AI", *self.prompt_rows.values(),
                 note="Tùy chỉnh prompt gửi ChatGPT / Claude / Gemini theo phong cách của bạn. "
                      "Được lưu cho các lần mở sau · ↺ Mặc định để quay về bản gốc.")

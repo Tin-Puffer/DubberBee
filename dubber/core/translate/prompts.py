@@ -7,12 +7,16 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
+from dubber.core.translate.manual import MANUAL_PROMPT
 from dubber.core.translate.review import DEFAULT_INSTRUCTIONS
 from dubber.core.translate.tiktok import SCRIPT_PLACEHOLDER, TIKTOK_PROMPT
 
 # kind → (settings key, default text)
 PROMPTS: Dict[str, Tuple[str, str]] = {
     "review": ("review_prompt", DEFAULT_INSTRUCTIONS),
+    "manual": ("manual_prompt", MANUAL_PROMPT),
+    # Review dialog, "Copy chỉ tiếng Trung": the same job as manual mode, its own prompt
+    "review_timed": ("review_timed_prompt", MANUAL_PROMPT),
     "tiktok": ("tiktok_prompt", TIKTOK_PROMPT),
 }
 

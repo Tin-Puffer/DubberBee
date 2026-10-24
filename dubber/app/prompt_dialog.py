@@ -10,6 +10,8 @@ from dubber.core.translate import prompts
 
 TITLES = {
     "review": "Prompt sửa bản dịch",
+    "manual": "Prompt dịch thủ công (AI gộp câu, tự đặt thời gian)",
+    "review_timed": "Prompt duyệt bản dịch — Copy chỉ tiếng Trung (gộp / tách)",
     "tiktok": "Prompt TikTok (tiêu đề, mô tả, hashtag)",
 }
 HELP = {
@@ -17,6 +19,14 @@ HELP = {
                "dịch</b>. Sau đoạn này app tự thêm các câu dạng "
                "<code>12. [1,5s] 中文 → tiếng Việt</code>.<br>Giữ yêu cầu chatbot trả lời dạng "
                "<code>[12] câu tiếng Việt</code> để <b>Dán kết quả</b> đọc được."),
+    "manual": ("Dùng khi bộ dịch là <b>Thủ công — nhờ AI</b>: chép khi bấm <b>📋 Sao chép cho "
+               "AI</b>. Sau đoạn này app tự thêm độ dài video và các dòng dạng "
+               "<code>[12] 00:07.48 → 00:09.92 | 中文</code>.<br>Giữ yêu cầu AI trả lời dạng "
+               "<code>[00:07.48 → 00:11.20] câu tiếng Việt</code> để app đọc được."),
+    "review_timed": ("Dùng khi bấm <b>📋 Copy chỉ tiếng Trung</b> trong cửa sổ <b>Duyệt bản "
+                     "dịch</b> (bộ dịch Tự động / Groq / MarianMT / NLLB). App tự thêm độ dài "
+                     "video và các dòng <code>[12] 00:07.48 → 00:09.92 | 中文</code>.<br>Giữ yêu "
+                     "cầu AI trả lời dạng <code>[00:07.48 → 00:11.20] câu tiếng Việt</code>."),
     "tiktok": ("Ghi vào file <b>&lt;tên video&gt;_vi.txt</b> cạnh video xuất ra và được chép khi "
                "bấm <b>📋 TikTok</b> trên thẻ video.<br>Dòng <code>"
                + prompts.SCRIPT_PLACEHOLDER.replace("<", "&lt;").replace(">", "&gt;")

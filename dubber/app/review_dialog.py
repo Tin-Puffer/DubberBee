@@ -55,6 +55,7 @@ class PasteReplyDialog(QDialog):
         self.setWindowTitle("Dán kết quả AI")
         self.resize(900, 620)
         self.changes: dict = {}
+        self.timed_text = ""    # a "[start → end] câu" reply: the caller previews it
         self._vi = vi
         self._parsed: dict = {}
 
@@ -101,6 +102,13 @@ class PasteReplyDialog(QDialog):
             self._info.setText("")
             self._btn_apply.setEnabled(False)
             return
+        from dubber.core.translate.manual import looks_timed
+        self.timed_text = text if looks_timed(text) else ""
+        if self.timed_text:
+            self._info.setText("Đây là kết quả <b>có thời gian</b> (AI gộp / tách câu) — bấm "
+                               "<b>Áp dụng</b> để xem trước và thay cách chia câu.")
+            self._btn_apply.setEnabled(True)
+            return
         try:
             parsed, bad = parse_chatbot_reply(text, len(self._vi))
         except ValueError as exc:
@@ -131,6 +139,9 @@ class PasteReplyDialog(QDialog):
         self._btn_apply.setEnabled(bool(self._parsed))
 
     def _apply(self):
+        if self.timed_text:
+            self.accept()
+            return
         for r in range(self._table.rowCount()):
             item = self._table.item(r, 0)
             if item.checkState() == Qt.Checked:
@@ -140,15 +151,24 @@ class PasteReplyDialog(QDialog):
 
 
 class ReviewDialog(QDialog):
-    """Result: ``self.result_vi`` = Vietnamese text per row (after Tiếp tục), else None."""
+    """After Tiếp tục: ``result`` = Vietnamese text per row (list), or {"rows": [...]} when a
+    chatbot merged / split the lines (new start / end / src_text / vi_text); else None.
+    ``result_vi`` = the Vietnamese texts of the rows shown."""
 
     def __init__(self, video: str, rows: list, audio: "Path | None" = None,
                  tts_engine: str = "piper", voice: "str | None" = None,
-                 work_dir: "Path | None" = None, parent=None):
+                 work_dir: "Path | None" = None, parent=None,
+                 duration: "float | None" = None):
         super().__init__(parent)
         self.setWindowTitle(f"Duyệt bản dịch — {video}")
         self.resize(1180, 760)
         self.result_vi = None
+        self.result = None
+        # The Chinese lines as recognised: what "Copy chỉ tiếng Trung" sends, and what a
+        # merge / split reply is mapped back onto
+        self._asr_rows = [dict(r) for r in rows]
+        self._duration = duration or (max((r["end"] for r in rows), default=0.0) + 1.0)
+        self._restructured = False
         self._rows = rows
         self._orig = [r.get("vi_text", "") for r in rows]
         self._vi = list(self._orig)
@@ -165,9 +185,10 @@ class ReviewDialog(QDialog):
 
         lay = QVBoxLayout(self)
         head = QLabel(
-            f"<b>{len(rows)} câu</b>. Bấm đúp ô <b>Tiếng Việt</b> để sửa, hoặc dùng "
-            "<b>Copy cho AI</b> → <b>Dán kết quả AI</b>. <b>Tiếp tục</b> để tạo giọng Việt và "
-            "render video (câu không sửa dùng lại giọng đã tạo).", self)
+            f"<b>{len(rows)} câu</b>. Bấm đúp ô <b>Tiếng Việt</b> để sửa, hoặc nhờ AI: "
+            "<b>Copy kèm tiếng Việt</b> (AI sửa chữ) hay <b>Copy chỉ tiếng Trung</b> (AI dịch lại, "
+            "được gộp / tách câu, tự đặt thời gian) → <b>Dán kết quả AI</b>. <b>Tiếp tục</b> để "
+            "tạo giọng Việt và render video.", self)
         head.setWordWrap(True)
         lay.addWidget(head)
 
@@ -210,19 +231,30 @@ class ReviewDialog(QDialog):
         self._btn_tts.setToolTip("Nghe câu tiếng Việt đang chọn bằng giọng của video này")
         self._btn_tts.clicked.connect(self._play_tts)
         self._btn_tts.setEnabled(self._work is not None)
-        self._btn_copy = QPushButton("📋 Copy cho AI ▾", self)
+        self._btn_copy = QPushButton("📋 Copy kèm tiếng Việt ▾", self)
+        self._btn_copy.setToolTip("Tiếng Trung + bản dịch: AI chỉ sửa chữ, giữ nguyên số câu")
         self._copy_menu = QMenu(self)
         self._copy_menu.aboutToShow.connect(self._fill_copy_menu)
         self._btn_copy.setMenu(self._copy_menu)
+        self._btn_copy_zh = QPushButton("📋 Copy chỉ tiếng Trung", self)
+        self._btn_copy_zh.setToolTip("Tiếng Trung + thời gian: AI dịch lại, được gộp / tách câu "
+                                     "và tự đặt thời gian, khoảng nghỉ")
+        self._btn_copy_zh.clicked.connect(self._copy_timed)
         self._btn_paste = QPushButton("📥 Dán kết quả AI…", self)
+        self._btn_paste.setToolTip("Nhận cả hai dạng: “[số] câu” (sửa chữ) và "
+                                   "“[00:07.48 → 00:11.20] câu” (gộp / tách, thay cách chia câu)")
         self._btn_paste.clicked.connect(self._paste)
-        self._btn_prompt = QPushButton("✎ Prompt…", self)
+        self._btn_prompt = QPushButton("✎ Prompt ▾", self)
         self._btn_prompt.setToolTip("Sửa prompt đặt ở đầu khi copy (được lưu lại)")
-        self._btn_prompt.clicked.connect(self._edit_prompt)
+        prompt_menu = QMenu(self)
+        prompt_menu.addAction("Prompt “Copy kèm tiếng Việt” (sửa chữ)…", self._edit_prompt)
+        prompt_menu.addAction("Prompt “Copy chỉ tiếng Trung” (gộp / tách)…",
+                              self._edit_timed_prompt)
+        self._btn_prompt.setMenu(prompt_menu)
         self._btn_undo = QPushButton("↶ Hoàn tác", self)
         self._btn_undo.clicked.connect(self._undo_last)
-        for b in (self._btn_src, self._btn_tts, self._btn_copy, self._btn_paste,
-                  self._btn_prompt):
+        for b in (self._btn_src, self._btn_tts, self._btn_copy, self._btn_copy_zh,
+                  self._btn_paste, self._btn_prompt):
             tools.addWidget(b)
         tools.addStretch(1)
         tools.addWidget(self._btn_undo)
@@ -387,17 +419,36 @@ class ReviewDialog(QDialog):
         self._status.setText(f"✓ Đã copy {span} — dán vào ChatGPT / Claude / Gemini, "
                              "rồi bấm “Dán kết quả AI”")
 
+    def _copy_timed(self):
+        """Chinese lines + times only, for a chatbot that may merge / split / retime."""
+        from dubber.core.translate.manual import manual_text
+        from dubber.core.translate.prompts import get_prompt
+        text = manual_text(self._asr_rows, self._duration, get_prompt("review_timed"))
+        QGuiApplication.clipboard().setText(text)
+        self._copied = text
+        self._status.setText(f"✓ Đã copy {len(self._asr_rows)} dòng tiếng Trung kèm thời gian — "
+                             "AI được gộp / tách câu; dán kết quả bằng “Dán kết quả AI”")
+
     def _paste(self):
+        from dubber.core.translate.manual import looks_timed
         self._commit_open_cell()
         clip = QGuiApplication.clipboard().text()
         if clip == self._copied:
             clip = ""   # still our own copy (its instructions have numbered lines too)
+        if looks_timed(clip):
+            self._paste_timed(clip)
+            return
         try:
             parse_chatbot_reply(clip, len(self._rows))
         except ValueError:
             clip = ""   # the clipboard holds something else: start empty
         dlg = PasteReplyDialog(self._vi, clip, parent=self)
-        if dlg.exec() != QDialog.Accepted or not dlg.changes:
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if dlg.timed_text:
+            self._paste_timed(dlg.timed_text)
+            return
+        if not dlg.changes:
             return
         self._undo.append(list(self._vi))
         vi = list(self._vi)
@@ -407,12 +458,48 @@ class ReviewDialog(QDialog):
         self._status.setText(f"✓ Đã áp dụng {len(dlg.changes)} câu từ AI "
                              "(Hoàn tác để bỏ)")
 
+    def _paste_timed(self, text: str):
+        """A merge / split reply: preview it, then rebuild the table on its lines."""
+        from dubber.app.manual_dialog import TimedReplyDialog
+        dlg = TimedReplyDialog(self._duration, len(self._asr_rows), text, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.segments:
+            self.apply_segments(dlg.segments)
+
+    def apply_segments(self, segs: list):
+        from dubber.core.translate.manual import to_translate_rows
+        self._undo.append(("rows", self._rows, list(self._vi), list(self._orig),
+                           self._restructured))
+        self._rows = to_translate_rows(segs, self._asr_rows)
+        self._vi = [r["vi_text"] for r in self._rows]
+        self._orig = list(self._vi)
+        self._restructured = True
+        self._rebuild_table()
+        self._status.setText(f"✓ Đã thay cách chia câu: {len(self._asr_rows)} dòng tiếng Trung → "
+                             f"{len(self._rows)} câu tiếng Việt (Hoàn tác để quay lại)")
+
+    def _rebuild_table(self):
+        self._table.setRowCount(0)
+        self._table.setRowCount(len(self._rows))
+        self._fill()
+        self._next_chunk = 1
+        self._refresh()
+
     def _edit_prompt(self):
         edit_instructions(self)
 
+    def _edit_timed_prompt(self):
+        from dubber.app.prompt_dialog import edit_prompt
+        edit_prompt("review_timed", self)
+
     def _undo_last(self):
-        if self._undo:
-            self._set_all(self._undo.pop())
+        if not self._undo:
+            return
+        last = self._undo.pop()
+        if isinstance(last, tuple):     # undo a merge / split: back to those lines
+            _, self._rows, self._vi, self._orig, self._restructured = last
+            self._rebuild_table()
+        else:
+            self._set_all(last)
 
     # ── Listening ──────────────────────────────────────────────────────────────
 
@@ -506,10 +593,12 @@ class ReviewDialog(QDialog):
         self._runner.wait_all()
         self._stop_audio()
         self.result_vi = list(self._vi)
+        self.result = ({"rows": [{**r, "vi_text": v} for r, v in zip(self._rows, self._vi)]}
+                       if self._restructured else self.result_vi)
         self.accept()
 
     def reject(self):
-        edited = sum(a != b for a, b in zip(self._vi, self._orig))
+        edited = sum(a != b for a, b in zip(self._vi, self._orig)) + (5 if self._restructured else 0)
         if edited:
             ans = QMessageBox.question(
                 self, "Hủy video này?",

@@ -161,6 +161,8 @@ class PipelineWorker(QObject):
         skip_review: bool = True,
         logo: "dict | None" = None,
         dub_voice: bool = True,
+        flip: bool = False,
+        music: "dict | None" = None,
     ) -> None:
         super().__init__()
         import threading
@@ -174,6 +176,8 @@ class PipelineWorker(QObject):
         self.sep_overlap     = sep_overlap   # None = the pipeline's default
         self.logo            = logo          # run_m5's logo dict, None = no logo
         self.dub_voice       = dub_voice     # False: subtitles only, no TTS
+        self.flip            = flip          # mirror the picture horizontally
+        self.music           = music         # {path, volume}: the user's own music
         self.tts_engine      = tts_engine
         self.skip_review     = skip_review
         self.sub_font        = sub_font
@@ -229,7 +233,8 @@ class PipelineWorker(QObject):
                 "vi_volume", "music_volume", "cn_voice_volume", "keep_music", "keep_cn_voice",
                 "show_subtitles", "scale", "fps", "crf", "encoder_preset", "audio_bitrate",
                 "blur_mode", "blur_pad", "sub_font", "sub_size", "sub_color",
-                "sub_outline_color", "sub_outline", "sub_box", "logo", "dub_voice", "output_dir")
+                "sub_outline_color", "sub_outline", "sub_box", "logo", "dub_voice", "flip",
+                "music", "output_dir")
         return {k: getattr(self, k, None) for k in keys}
 
     def _report_error(self, exc: BaseException) -> None:
@@ -244,6 +249,15 @@ class PipelineWorker(QObject):
             log.exception("Could not write the error report")
             path, text = "", build_report(self.input_path, str(exc), tb, self._settings())
         self.error_report.emit(text, str(path))
+
+    def _manual(self, rows: list, duration: float) -> list:
+        """Wait for the user's chatbot translation ([{start, end, vi_text}])."""
+        answer = self._ask("manual", {"video": self.input_path.name, "rows": rows,
+                                      "duration": duration})
+        if not answer:
+            from dubber.core.utils.cancel import JobCancelled
+            raise JobCancelled("Đã hủy")
+        return answer
 
     def _review(self, rows: list, job_dir: Path, audio: Path) -> list:
         """Wait for the user to check / edit the translation (list of Vietnamese texts)."""
@@ -337,6 +351,7 @@ class PipelineWorker(QObject):
             if not self.skip_review:
                 pipeline.review_translation = lambda rows: self._review(
                     rows, job_dir, job_dir / "audio.wav")
+            pipeline.manual_translation = self._manual
 
             orig_m1 = pipeline.run_m1
             orig_m2 = pipeline.run_m2
@@ -420,6 +435,8 @@ class PipelineWorker(QObject):
                 tts_engine=self.tts_engine,
                 logo=self.logo,
                 dub_voice=self.dub_voice,
+                flip=self.flip,
+                music=self.music,
             )
 
             # ── Copy result out of the job cache to the user's output folder ──
@@ -714,6 +731,8 @@ _HINTS_TRANSLATOR = {
     "groq":  "Chất lượng tốt nhất · cần Internet và Groq API key (⚙ Cài đặt)",
     "local": "Offline, nhanh, chất lượng thấp hơn",
     "nllb":  "Offline, chất lượng khá hơn MarianMT, chậm · tải ~5,5 GB, cần ~6 GB RAM",
+    "ai_manual": ("Sau bước nhận dạng, app dừng và đưa tiếng Trung kèm thời gian để bạn nhờ "
+                  "ChatGPT dịch · AI được gộp / tách câu, tự đặt thời gian và khoảng nghỉ"),
 }
 _HINT_ASR_VOCALS = "Nhận dạng chính xác hơn với video có nhạc nền, chậm hơn một chút"
 # Separation quality = MDX-Net chunk overlap; times for a 14-min video on an M1 Pro
@@ -906,6 +925,23 @@ class OptionsPanel(QWidget):
         self._sld_cn_voice.valueChanged.connect(self.sep_label_changed)
         form.addRow(self._chk_cn_voice, _hbox(self._sld_cn_voice, self._lbl_cn_vol))
 
+        from dubber.core.audio.music import DEFAULT_VOLUME as _BGM_VOL
+        self._bgm_path: "str | None" = None
+        self._bgm_name = ""
+        self._chk_bgm = QCheckBox("Nhạc của bạn", self)
+        self._chk_bgm.setToolTip("Nhạc từ máy bạn, trộn thêm vào video")
+        self._chk_bgm.toggled.connect(self._on_audio_toggled)
+        self._sld_bgm, self._lbl_bgm_vol = _make_vol_slider(self, default=_BGM_VOL)
+        form.addRow(self._chk_bgm, _hbox(self._sld_bgm, self._lbl_bgm_vol))
+        self._lbl_bgm_file = QLabel(self)
+        self._lbl_bgm_file.setStyleSheet(f"color: {_TXT_MID}; font-size: 12px;")
+        self._btn_bgm_file = _small_button("Chọn file nhạc…", self)
+        self._btn_bgm_file.clicked.connect(self._pick_music)
+        form.addRow("", _hbox(self._lbl_bgm_file, self._btn_bgm_file, stretch_first=True))
+        self._load_last_music()
+        for sig in (self._chk_bgm.toggled, self._sld_bgm.valueChanged):
+            sig.connect(self._remember_music)
+
         self._hint = _hint_label(self)
         form.addRow("", self._hint)
         form.addRow("", _hint_label(self, "100% = giữ nguyên độ to của âm thanh gốc"))
@@ -970,6 +1006,7 @@ class OptionsPanel(QWidget):
         self._combo_translator.addItem("Groq (online)",                     userData="groq")
         self._combo_translator.addItem("Offline — MarianMT (~300 MB)",      userData="local")
         self._combo_translator.addItem("Offline — NLLB 1.3B (~5.5 GB)",     userData="nllb")
+        self._combo_translator.addItem("Thủ công — nhờ AI (ChatGPT…)",     userData="ai_manual")
         form.addRow("Dịch", self._combo_translator)
         _add_hint(form, self._combo_translator, _HINTS_TRANSLATOR)
 
@@ -1016,6 +1053,13 @@ class OptionsPanel(QWidget):
         form.addRow(self._btn_frame)
         form.addRow(_hint_label(self, "Kéo phụ đề, vẽ vùng che phụ đề gốc, đặt và đổi cỡ logo "
                                       "ngay trên khung hình — xem đúng như video xuất ra"))
+
+        _section(form, "Khung hình")
+        self._chk_flip = QCheckBox("Lật ngang video (gương)", self)
+        self._chk_flip.toggled.connect(lambda *_: self.preview_changed.emit())
+        form.addRow("Lật", self._chk_flip)
+        _add_hint(form, self._chk_flip, "Chữ in sẵn trong video (phụ đề gốc, biển hiệu) cũng bị "
+                                        "ngược · phụ đề Việt và logo vẫn đúng chiều")
 
         _section(form, "Chữ phụ đề")
         self._chk_subs = QCheckBox("Chèn phụ đề tiếng Việt vào video", self)
@@ -1087,6 +1131,65 @@ class OptionsPanel(QWidget):
 
         self._combo_blur.currentIndexChanged.connect(self._on_blur_mode_changed)
         self._on_layout_changed()
+
+    # ── Your own music ────────────────────────────────────────────────────────
+
+    def _pick_music(self) -> None:
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from dubber.core.audio.music import EXTENSIONS, import_music
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file nhạc nền", str(Path.home()),
+            "Âm thanh (" + " ".join(f"*.{e}" for e in EXTENSIONS) + ")")
+        if not path:
+            return
+        try:
+            self._bgm_path = str(import_music(Path(path)))
+        except Exception as exc:
+            QMessageBox.warning(self, "Không dùng được file này", f"Không đọc được nhạc:\n{exc}")
+            return
+        self._bgm_name = Path(path).name
+        self._chk_bgm.setChecked(True)
+        self._on_audio_toggled()
+        self._remember_music()
+
+    def _music_label(self) -> str:
+        if not (self._bgm_path and Path(self._bgm_path).exists()):
+            return "Chưa chọn file"
+        from dubber.core.audio.music import probe_duration
+        try:
+            d = probe_duration(Path(self._bgm_path))
+            length = f" · {int(d // 60)}:{int(d % 60):02d}"
+        except Exception:
+            length = ""
+        return f"🎵 {self._bgm_name or Path(self._bgm_path).name}{length}"
+
+    _MUSIC_KEYS = ("bgm_on", "bgm_path", "bgm_name", "bgm")
+
+    def _load_last_music(self) -> None:
+        """The music used last time (settings.json "last_music"), like the logo."""
+        from dubber.core.utils.settings import load_settings
+        last = load_settings().get("last_music")
+        if not isinstance(last, dict) or not last.get("bgm_path") \
+                or not Path(last["bgm_path"]).exists():
+            return
+        self._bgm_path, self._bgm_name = last["bgm_path"], last.get("bgm_name") or ""
+        for w in (self._chk_bgm, self._sld_bgm):
+            w.blockSignals(True)      # the audio hint isn't built yet; it refreshes after
+        self._chk_bgm.setChecked(bool(last.get("bgm_on")))
+        if isinstance(last.get("bgm"), int):
+            self._sld_bgm.setValue(last["bgm"])
+            self._lbl_bgm_vol.setText(f"{last['bgm']}%")
+        for w in (self._chk_bgm, self._sld_bgm):
+            w.blockSignals(False)
+
+    def _remember_music(self, *_) -> None:
+        if not self._bgm_path:
+            return
+        from dubber.core.utils.settings import load_settings, save_settings
+        cfg = self.get_config()
+        st = load_settings()
+        st["last_music"] = {k: cfg[k] for k in self._MUSIC_KEYS}
+        save_settings(st)
 
     # ── Logo ──────────────────────────────────────────────────────────────────
 
@@ -1319,6 +1422,11 @@ class OptionsPanel(QWidget):
         vi = self._chk_vi.isChecked()
         self._sld_vi.setEnabled(vi)
         self._lbl_vi_vol.setEnabled(vi)
+        bgm = self._chk_bgm.isChecked()
+        has_file = bool(self._bgm_path) and Path(self._bgm_path).exists()
+        self._sld_bgm.setEnabled(bgm and has_file)
+        self._lbl_bgm_vol.setEnabled(bgm and has_file)
+        self._lbl_bgm_file.setText(self._music_label())
         self._sld_music.setEnabled(music)
         self._lbl_music_vol.setEnabled(music)
         self._sld_cn_voice.setEnabled(voice)
@@ -1335,8 +1443,13 @@ class OptionsPanel(QWidget):
             msg = ("Chỉ phụ đề: không lồng tiếng Việt, bỏ qua bước TTS (nhanh hơn) · phụ đề theo "
                    "câu tiếng Trung · " + ("nên để Tiếng Trung 100% để nghe rõ tiếng gốc"
                                            if voice else msg[0].lower() + msg[1:]))
-            if not (music or voice):
+            if not (music or voice or (bgm and has_file)):
                 msg = "⚠ Không còn âm thanh nào — video xuất ra sẽ không có tiếng"
+        if bgm and has_file:
+            msg += ("  ·  + nhạc của bạn (tự lặp lại, nhỏ dần cuối video"
+                    + (" — bỏ tick “Nhạc nền” nếu muốn thay hẳn nhạc gốc)" if music else ")"))
+        elif bgm:
+            msg += "  ·  ⚠ Chưa chọn file nhạc → bấm “Chọn file nhạc…”"
         self._hint.setText(msg)
         self.sep_label_changed.emit()
 
@@ -1595,6 +1708,10 @@ class OptionsPanel(QWidget):
         return {
             "vi": self._sld_vi.value(),
             "vi_on": self._chk_vi.isChecked(),
+            "bgm_on": self._chk_bgm.isChecked(),
+            "bgm_path": self._bgm_path,
+            "bgm_name": self._bgm_name,
+            "bgm": self._sld_bgm.value(),
             "music_on": self._chk_music.isChecked(),
             "music": self._sld_music.value(),
             "cn_on": self._chk_cn_voice.isChecked(),
@@ -1620,6 +1737,7 @@ class OptionsPanel(QWidget):
             "sub_outline_color": self._btn_outline_color.color(),
             "sub_outline": self._spin_outline.value(),
             "sub_box": self._chk_box.isChecked(),
+            "flip_h": self._chk_flip.isChecked(),
             "logo_on": self._chk_logo.isChecked(),
             "logo_path": self._logo_path,
             "logo_size": self._spin_logo_size.value(),
@@ -1631,6 +1749,16 @@ class OptionsPanel(QWidget):
     def set_config(self, cfg: dict) -> None:
         self._sld_vi.setValue(cfg["vi"])
         self._chk_vi.setChecked(cfg.get("vi_on", True))   # .get(): older configs = voice on
+        from dubber.core.audio.music import DEFAULT_VOLUME as _BGM_VOL
+        self._bgm_path, self._bgm_name = cfg.get("bgm_path"), cfg.get("bgm_name") or ""
+        for w in (self._chk_bgm, self._sld_bgm):
+            w.blockSignals(True)
+        self._chk_bgm.setChecked(bool(cfg.get("bgm_on")))
+        self._sld_bgm.setValue(cfg.get("bgm", _BGM_VOL))
+        self._lbl_bgm_vol.setText(f"{self._sld_bgm.value()}%")
+        for w in (self._chk_bgm, self._sld_bgm):
+            w.blockSignals(False)
+        self._on_audio_toggled()      # file label + hint for this video's music
         self._chk_music.setChecked(cfg["music_on"])
         self._sld_music.setValue(cfg["music"])
         self._chk_cn_voice.setChecked(cfg["cn_on"])
@@ -1668,6 +1796,9 @@ class OptionsPanel(QWidget):
         self._combo_blur.blockSignals(False)
         self._combo_blur.refresh_hint()
         self._on_layout_changed()
+        self._chk_flip.blockSignals(True)
+        self._chk_flip.setChecked(bool(cfg.get("flip_h", False)))
+        self._chk_flip.blockSignals(False)
         # Logo: .get() so configs saved before the logo option still load
         from dubber.core.video.logo import DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE
         self._logo_path = cfg.get("logo_path")
@@ -2026,6 +2157,15 @@ _STEPS = [
 ]
 
 
+def _bgm_of(o: dict) -> "dict | None":
+    """Per-video config → run_m5's music argument (None: off, no file, or file gone)."""
+    from dubber.core.audio.music import DEFAULT_VOLUME
+    path = o.get("bgm_path")
+    if not (o.get("bgm_on") and path and Path(path).exists()):
+        return None
+    return {"path": path, "volume": o.get("bgm", DEFAULT_VOLUME)}
+
+
 def _sep_overlap_of(o: dict) -> float:
     """Separation quality of a per-video config (configs saved before it: the default)."""
     from dubber.core.audio.separate import DEFAULT_OVERLAP, OVERLAPS
@@ -2085,6 +2225,7 @@ def _layout_kwargs(o: dict) -> dict:
         "sub_outline": o.get("sub_outline", DEFAULT_OUTLINE),
         "sub_box": o.get("sub_box", False),
         "logo": _logo_of(o),
+        "flip": bool(o.get("flip_h", False)),
     }
 
 
@@ -2858,7 +2999,8 @@ class MainWindow(QWidget):
         dlg = LayoutDialog(job.path, blur_rect, sub_pos,
                            font_family=family, font_size=size, blur_mode=blur_mode,
                            style=self._opts.sub_style(), video_info=dims, parent=self,
-                           logo=self._opts.logo_settings())
+                           logo=self._opts.logo_settings(),
+                           flip=self._opts.get_config().get("flip_h", False))
         if dlg.exec() == QDialog.Accepted:
             self._opts.set_layout(dlg.blur_rect, dlg.sub_pos, dlg.blur_mode)
             self._opts.set_sub_font(dlg.font_family, dlg.font_size)
@@ -2894,20 +3036,32 @@ class MainWindow(QWidget):
             self._update_item(self._running)
             notify.notify(self, f"{APP_NAME} — cần bạn", {
                 "review": f"{job.path.name}: dịch xong, mời bạn duyệt bản dịch",
+                "manual": f"{job.path.name}: đã nhận dạng xong, mời bạn dịch với AI",
                 "rate_limit": f"{job.path.name}: Groq đang giới hạn",
             }.get(kind, job.path.name))
         if self._progress is not None:
             self._progress.pause()
         if kind == "rate_limit":
             answer = ask_rate_limit(payload, parent=self)
+        elif kind == "manual":
+            self._prefetch_next()   # no GPU work while the user asks the chatbot
+            from dubber.app.manual_dialog import ManualTranslateDialog
+            self._set_status(f"{payload['video']}: chờ bạn dán bản dịch từ AI…", _AMBER)
+            dlg = ManualTranslateDialog(payload["video"], payload["rows"], payload["duration"],
+                                        parent=self)
+            answer = dlg.segments if dlg.exec() == QDialog.Accepted else None
+            dlg.deleteLater()
         elif kind == "review":
             self._prefetch_next()   # translated; the user may take minutes — use them
             from dubber.app.review_dialog import ReviewDialog
             self._set_status(f"{payload['video']}: chờ bạn duyệt bản dịch…", _AMBER)
+            info = job.info if job is not None else None
+            duration = (info.duration if info and info.duration
+                        and not job.opts.get("trim_on") else None)
             dlg = ReviewDialog(payload["video"], payload["rows"], audio=payload["audio"],
                                tts_engine=payload["tts_engine"], voice=payload["voice"],
-                               work_dir=payload["work_dir"], parent=self)
-            answer = dlg.result_vi if dlg.exec() == QDialog.Accepted else None
+                               work_dir=payload["work_dir"], parent=self, duration=duration)
+            answer = dlg.result if dlg.exec() == QDialog.Accepted else None
             dlg.deleteLater()   # a long video's table is big: don't keep it under the window
         else:
             answer = None
@@ -2988,6 +3142,7 @@ class MainWindow(QWidget):
             job.path,
             vi_volume=o["vi"] / 100.0,
             dub_voice=o.get("vi_on", True),
+            music=_bgm_of(o),
             music_volume=o["music"] / 100.0 if o["music_on"] else 0.0,
             cn_voice_volume=o["cn"] / 100.0 if o["cn_on"] else 0.0,
             show_subtitles=o["subs"],

@@ -124,3 +124,14 @@ def test_voice_and_background_are_mixed(tmp_path, monkeypatch):
     assert _inputs(cmd) == ["in.mp4", "dub.wav", "bg.wav"]
     fc = cmd[cmd.index("-filter_complex") + 1]
     assert "[2:a]volume=0.4[bg_a];[1:a]volume=1.0[dub_a]" in fc and "amix=inputs=2" in fc
+
+
+def test_flip_mirrors_the_picture_before_blur_logo_and_subtitles(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, flip=True, blur_band=[(0.0, 1.0, 10, 10, 100, 40)],
+                   logo=(tmp_path / "l.png", 0, 0, 10, 10, 1.0))
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert fc.startswith("[0:v]hflip[mirrored];[mirrored]split")
+    assert fc.index("hflip") < fc.index("overlay") < fc.index("ass=")
+    assert "hflip" not in cmd[cmd.index("-filter_complex") + 1].split("ass=")[1]
+    plain = _cmd_for(tmp_path, monkeypatch)
+    assert "hflip" not in plain[plain.index("-filter_complex") + 1]
