@@ -71,9 +71,47 @@ def _paint_logo(pix: QPixmap, video_w: int, video_h: int, logo: "dict | None") -
     p.end()
 
 
+def _brighten(pix: QPixmap, pct: int) -> None:
+    """Approximate FFmpeg eq brightness (% / 200 added to every pixel) in place."""
+    if not pct:
+        return
+    p = QPainter(pix)
+    a = min(255, round(abs(pct) / 200 * 255))
+    p.fillRect(pix.rect(), QColor(255, 255, 255, a) if pct > 0 else QColor(0, 0, 0, a))
+    p.end()
+
+
+def portrait_canvas(pix: QPixmap, bg_brightness: "int | None" = None) -> QPixmap:
+    """*pix* fitted in a 9:16 frame over a blurred copy of itself (as exported)."""
+    from dubber.core.video.render import DEFAULT_BG_BRIGHTNESS
+    if bg_brightness is None:
+        bg_brightness = DEFAULT_BG_BRIGHTNESS
+    W = pix.width() if pix.width() * 16 >= pix.height() * 9 else round(pix.height() * 9 / 16)
+    H = round(W * 16 / 9)
+    cover = pix.scaled(W, H, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    cover = cover.copy((cover.width() - W) // 2, (cover.height() - H) // 2, W, H)
+    small = cover.scaled(max(1, W // 24), max(1, H // 24), Qt.IgnoreAspectRatio,
+                         Qt.SmoothTransformation)
+    out = small.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    fit = pix.scaled(W, H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    _brighten(out, bg_brightness)
+    p = QPainter(out)
+    p.drawPixmap((W - fit.width()) // 2, (H - fit.height()) // 2, fit)
+    p.end()
+    return out
+
+
 def paint_preview(frame: Path, video_w: int, video_h: int, layout: dict, show_subs: bool,
                   width: int = 320) -> QPixmap:
     """*layout*: the run_m5 blur / subtitle arguments (gui._layout_kwargs)."""
+    pix = _paint_frame(frame, video_w, video_h, layout, show_subs, width)
+    if layout.get("portrait") and not pix.isNull():
+        pix = portrait_canvas(pix, layout.get("bg_brightness"))
+    return pix
+
+
+def _paint_frame(frame: Path, video_w: int, video_h: int, layout: dict, show_subs: bool,
+                 width: int) -> QPixmap:
     pix = QPixmap(str(frame))
     if pix.isNull():
         return pix
@@ -81,6 +119,7 @@ def paint_preview(frame: Path, video_w: int, video_h: int, layout: dict, show_su
     if layout.get("flip"):            # mirrored before blur / logo / subtitles, as exported
         from PySide6.QtGui import QTransform
         pix = pix.transformed(QTransform().scale(-1, 1))
+    _brighten(pix, layout.get("brightness", 0))     # the picture only, before subtitles
     W, H = pix.width(), pix.height()
     vw, vh = (video_w or W), (video_h or H)
     scale = H / vh

@@ -120,6 +120,9 @@ dubber/
     │   ├── logo.py          # logo kênh: ảnh chép vào user-data/logos (PNG), cỡ % rộng, góc / tự chọn
     │   └── render.py        # render_final() — (lật ngang) + làm mờ + logo + subtitle + audio (FFmpeg);
     │                        # dub_wav=None = chỉ phụ đề (không giọng Việt), không âm thanh nào = -an
+    │                        # portrait=True: khung dọc 9:16 (1080×1920 / theo độ phân giải), hình đã có
+    │                        # phụ đề + logo đặt giữa, nền là chính video phóng to + làm mờ;
+    │                        # brightness / bg_brightness: độ sáng hình / nền mờ (%, eq = % / 200)
     └── utils/
         ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH
         ├── gpu.py           # gpu_lock: MPS/CoreML chỉ 1 luồng (tách nhạc ↔ dịch offline), 2 luồng = crash Metal

@@ -321,6 +321,9 @@ class Pipeline:
         dub_voice: bool = True,
         flip: bool = False,
         music: "dict | None" = None,
+        portrait: bool = False,
+        brightness: int = 0,
+        bg_brightness: "int | None" = None,
     ) -> tuple[Path, Path, "Path | None", Path, Path]:
         """M5: run_m3 → subtitles (.ass) → render final output.mp4 (from the source video;
         M4's dubbed.mp4 isn't needed).
@@ -474,6 +477,9 @@ class Pipeline:
             logo=logo_arg,
             flip=flip,
             music=music_arg,
+            portrait=portrait,
+            brightness=brightness,
+            **({} if bg_brightness is None else {"bg_brightness": bg_brightness}),
         )
         log.info("=== M5 done → %s ===", output_mp4)
         return asr_json, translate_json, dub_wav, subs_ass, output_mp4

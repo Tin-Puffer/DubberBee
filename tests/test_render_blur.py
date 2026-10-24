@@ -135,3 +135,51 @@ def test_flip_mirrors_the_picture_before_blur_logo_and_subtitles(tmp_path, monke
     assert "hflip" not in cmd[cmd.index("-filter_complex") + 1].split("ass=")[1]
     plain = _cmd_for(tmp_path, monkeypatch)
     assert "hflip" not in plain[plain.index("-filter_complex") + 1]
+
+
+def test_blur_radius_fits_chroma_plane():
+    # 1280x720 video, blur band 57 px tall: radius 14 made FFmpeg fail
+    # ("Invalid chroma_param radius value 14, must be >= 0 and < 14")
+    from dubber.core.video.render import _blur_radius
+    assert _blur_radius(1000, 57) == 13
+    for h in range(2, 200):
+        r = _blur_radius(1000, h)
+        assert 0 <= r <= 15 and 2 * r < (h // 2)
+
+
+def test_portrait_size_follows_the_resolution_choice():
+    from dubber.core.video.render import portrait_size
+    assert portrait_size(None) == (1080, 1920)
+    assert portrait_size("-2:1080") == (1080, 1920)
+    assert portrait_size("-2:720") == (720, 1280)
+    assert portrait_size("-2:480") == (480, 854)
+    assert portrait_size("-2:360") == (360, 640)
+
+
+def test_portrait_puts_the_finished_frame_over_a_blurred_copy(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, portrait=True, scale="-2:720", fps=30,
+                   blur_band=[(0.0, 1.0, 10, 10, 100, 40)])
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # subtitles first (source coordinates), then the 9:16 canvas, then fps
+    assert fc.index("ass=") < fc.index("[pt_fg][pt_bg]") < fc.index("fps=fps=30")
+    assert "scale=720:1280:force_original_aspect_ratio=decrease" in fc
+    assert "scale=-2:720" not in fc                    # no second resize of the canvas
+    assert "overlay=(W-w)/2:(H-h)/2[after_scale]" in fc
+    plain = _cmd_for(tmp_path, monkeypatch)
+    assert "pt_fg" not in plain[plain.index("-filter_complex") + 1]
+
+
+def test_brightness_changes_the_picture_before_subtitles(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, brightness=20, flip=True)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert fc.index("hflip") < fc.index("eq=brightness=0.100") < fc.index("ass=")
+    plain = _cmd_for(tmp_path, monkeypatch)
+    assert "eq=" not in plain[plain.index("-filter_complex") + 1]
+
+
+def test_portrait_background_brightness(tmp_path, monkeypatch):
+    cmd = _cmd_for(tmp_path, monkeypatch, portrait=True, bg_brightness=-30)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "eq=brightness=-0.150,scale=1080:1920" in fc
+    cmd = _cmd_for(tmp_path, monkeypatch, portrait=True, bg_brightness=0)
+    assert "eq=" not in cmd[cmd.index("-filter_complex") + 1]

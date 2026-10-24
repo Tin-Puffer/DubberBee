@@ -163,6 +163,9 @@ class PipelineWorker(QObject):
         dub_voice: bool = True,
         flip: bool = False,
         music: "dict | None" = None,
+        portrait: bool = False,
+        brightness: int = 0,
+        bg_brightness: "int | None" = None,
     ) -> None:
         super().__init__()
         import threading
@@ -177,6 +180,9 @@ class PipelineWorker(QObject):
         self.logo            = logo          # run_m5's logo dict, None = no logo
         self.dub_voice       = dub_voice     # False: subtitles only, no TTS
         self.flip            = flip          # mirror the picture horizontally
+        self.portrait        = portrait      # 9:16 phone frame, blurred video behind
+        self.brightness      = brightness    # % (−50 … +50)
+        self.bg_brightness   = bg_brightness # % for the 9:16 background, None = default
         self.music           = music         # {path, volume}: the user's own music
         self.tts_engine      = tts_engine
         self.skip_review     = skip_review
@@ -234,7 +240,7 @@ class PipelineWorker(QObject):
                 "show_subtitles", "scale", "fps", "crf", "encoder_preset", "audio_bitrate",
                 "blur_mode", "blur_pad", "sub_font", "sub_size", "sub_color",
                 "sub_outline_color", "sub_outline", "sub_box", "logo", "dub_voice", "flip",
-                "music", "output_dir")
+                "portrait", "brightness", "bg_brightness", "music", "output_dir")
         return {k: getattr(self, k, None) for k in keys}
 
     def _report_error(self, exc: BaseException) -> None:
@@ -437,6 +443,9 @@ class PipelineWorker(QObject):
                 dub_voice=self.dub_voice,
                 flip=self.flip,
                 music=self.music,
+                portrait=self.portrait,
+                brightness=self.brightness,
+                bg_brightness=self.bg_brightness,
             )
 
             # ── Copy result out of the job cache to the user's output folder ──
@@ -1060,6 +1069,40 @@ class OptionsPanel(QWidget):
         form.addRow("Lật", self._chk_flip)
         _add_hint(form, self._chk_flip, "Chữ in sẵn trong video (phụ đề gốc, biển hiệu) cũng bị "
                                         "ngược · phụ đề Việt và logo vẫn đúng chiều")
+        self._combo_aspect = QComboBox(self)
+        self._combo_aspect.addItem("Như video gốc", "orig")
+        self._combo_aspect.addItem("Dọc 9:16 (TikTok) — nền mờ", "9:16")
+        self._combo_aspect.currentIndexChanged.connect(lambda *_: self.preview_changed.emit())
+        form.addRow("Tỉ lệ", self._combo_aspect)
+        _add_hint(form, self._combo_aspect, {
+            "orig": "Giữ khung hình của video gốc",
+            "9:16": "Khung điện thoại 1080×1920 (theo Độ phân giải ở tab Xuất): video ở giữa, "
+                    "phần trống trên / dưới là chính video đó phóng to + làm mờ"})
+        from dubber.core.video.render import (BRIGHTNESS_MAX, BRIGHTNESS_MIN,
+                                              DEFAULT_BG_BRIGHTNESS)
+        self._spin_bright = QSpinBox(self)
+        self._spin_bg_bright = QSpinBox(self)
+        for spin, value in ((self._spin_bright, 0), (self._spin_bg_bright, DEFAULT_BG_BRIGHTNESS)):
+            spin.setRange(BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+            spin.setSingleStep(5)
+            spin.setValue(value)
+            spin.setSuffix(" %")
+            spin.setFixedWidth(90)
+            spin.valueChanged.connect(lambda *_: self.preview_changed.emit())
+        self._spin_bright.setToolTip("0 = như gốc · dương = sáng hơn · âm = tối hơn")
+        self._spin_bg_bright.setToolTip("Độ sáng phần nền mờ trên / dưới (chỉ khi Dọc 9:16)")
+        self._lbl_bg_bright = QLabel("Nền mờ", self)
+        self._btn_bright_reset = _small_button("↺", self)
+        self._btn_bright_reset.setFixedWidth(34)
+        self._btn_bright_reset.setToolTip("Về mặc định")
+        self._btn_bright_reset.clicked.connect(self._reset_brightness)
+        form.addRow("Độ sáng", _hbox(self._spin_bright, self._lbl_bg_bright,
+                                     self._spin_bg_bright, self._btn_bright_reset,
+                                     stretch_last=False))
+        _add_hint(form, self._spin_bright, "Video: sáng / tối cả hình (phụ đề, logo giữ nguyên) "
+                                           "· Nền mờ: phần trên / dưới khi xuất Dọc 9:16")
+        self._combo_aspect.currentIndexChanged.connect(self._update_bg_bright)
+        self._update_bg_bright()
 
         _section(form, "Chữ phụ đề")
         self._chk_subs = QCheckBox("Chèn phụ đề tiếng Việt vào video", self)
@@ -1738,6 +1781,9 @@ class OptionsPanel(QWidget):
             "sub_outline": self._spin_outline.value(),
             "sub_box": self._chk_box.isChecked(),
             "flip_h": self._chk_flip.isChecked(),
+            "aspect": self._combo_aspect.currentData(),
+            "brightness": self._spin_bright.value(),
+            "bg_brightness": self._spin_bg_bright.value(),
             "logo_on": self._chk_logo.isChecked(),
             "logo_path": self._logo_path,
             "logo_size": self._spin_logo_size.value(),
@@ -1745,6 +1791,16 @@ class OptionsPanel(QWidget):
             "logo_position": self._combo_logo_pos.currentData(),
             "logo_pos": self._logo_pos,
         }
+
+    def _update_bg_bright(self, *_) -> None:
+        on = self._combo_aspect.currentData() == "9:16"
+        self._spin_bg_bright.setEnabled(on)
+        self._lbl_bg_bright.setEnabled(on)
+
+    def _reset_brightness(self) -> None:
+        from dubber.core.video.render import DEFAULT_BG_BRIGHTNESS
+        self._spin_bright.setValue(0)
+        self._spin_bg_bright.setValue(DEFAULT_BG_BRIGHTNESS)
 
     def set_config(self, cfg: dict) -> None:
         self._sld_vi.setValue(cfg["vi"])
@@ -1799,6 +1855,17 @@ class OptionsPanel(QWidget):
         self._chk_flip.blockSignals(True)
         self._chk_flip.setChecked(bool(cfg.get("flip_h", False)))
         self._chk_flip.blockSignals(False)
+        self._combo_aspect.blockSignals(True)
+        _select_data(self._combo_aspect, cfg.get("aspect", "orig"))
+        self._combo_aspect.blockSignals(False)
+        self._combo_aspect.refresh_hint()
+        from dubber.core.video.render import DEFAULT_BG_BRIGHTNESS
+        for spin, key, default in ((self._spin_bright, "brightness", 0),
+                                   (self._spin_bg_bright, "bg_brightness", DEFAULT_BG_BRIGHTNESS)):
+            spin.blockSignals(True)
+            spin.setValue(int(cfg.get(key, default)))
+            spin.blockSignals(False)
+        self._update_bg_bright()
         # Logo: .get() so configs saved before the logo option still load
         from dubber.core.video.logo import DEFAULT_OPACITY, DEFAULT_POSITION, DEFAULT_SIZE
         self._logo_path = cfg.get("logo_path")
@@ -2226,6 +2293,9 @@ def _layout_kwargs(o: dict) -> dict:
         "sub_box": o.get("sub_box", False),
         "logo": _logo_of(o),
         "flip": bool(o.get("flip_h", False)),
+        "portrait": o.get("aspect") == "9:16",
+        "brightness": int(o.get("brightness", 0)),
+        "bg_brightness": o.get("bg_brightness"),
     }
 
 

@@ -89,7 +89,8 @@ def app():
 
 
 _STYLE_DEFAULTS = {"sub_color": "#FFFFFF", "sub_outline_color": "#000000", "sub_outline": 2,
-                   "sub_box": False, "blur_pad": 12, "logo": None, "flip": False}
+                   "sub_box": False, "blur_pad": 12, "logo": None, "flip": False,
+                   "portrait": False, "brightness": 0, "bg_brightness": None}
 
 
 def test_layout_kwargs_mapping():
@@ -348,3 +349,50 @@ def test_quick_preview_is_mirrored(app, tmp_path):
     left = paint_preview(frame, 64, 36, {**base, "flip": False}, False, width=64).toImage()
     right = paint_preview(frame, 64, 36, {**base, "flip": True}, False, width=64).toImage()
     assert left.pixelColor(2, 18).red() > 200 and right.pixelColor(61, 18).red() > 200
+
+
+def test_aspect_option_roundtrip_and_layout(app):
+    from dubber.app.gui import OptionsPanel, _layout_kwargs
+    a = OptionsPanel()
+    assert a.get_config()["aspect"] == "orig" and _layout_kwargs(a.get_config())["portrait"] is False
+    seen = []
+    a.preview_changed.connect(lambda: seen.append(1))
+    a._combo_aspect.setCurrentIndex(a._combo_aspect.findData("9:16"))
+    cfg = a.get_config()
+    assert cfg["aspect"] == "9:16" and _layout_kwargs(cfg)["portrait"] is True and seen
+    b = OptionsPanel()
+    b.set_config(cfg)
+    assert b.get_config()["aspect"] == "9:16"
+    b.set_config({k: v for k, v in cfg.items() if k != "aspect"})   # older config
+    assert b.get_config()["aspect"] == "orig"
+
+
+def test_quick_preview_portrait_is_9_16(app, tmp_path):
+    from PySide6.QtGui import QImage
+    from dubber.app.preview import paint_preview
+    img = QImage(64, 36, QImage.Format_RGB32)
+    img.fill(0x336699)
+    img.save(str(tmp_path / "f.png"))
+    pix = paint_preview(tmp_path / "f.png", 1280, 720, {"portrait": True}, show_subs=False,
+                        width=320)
+    assert abs(pix.width() / pix.height() - 9 / 16) < 0.01
+
+
+def test_brightness_options_roundtrip(app):
+    from dubber.app.gui import OptionsPanel, _layout_kwargs
+    from dubber.core.video.render import DEFAULT_BG_BRIGHTNESS
+    a = OptionsPanel()
+    cfg = a.get_config()
+    assert cfg["brightness"] == 0 and cfg["bg_brightness"] == DEFAULT_BG_BRIGHTNESS
+    assert not a._spin_bg_bright.isEnabled()                 # only for 9:16
+    a._combo_aspect.setCurrentIndex(a._combo_aspect.findData("9:16"))
+    assert a._spin_bg_bright.isEnabled()
+    a._spin_bright.setValue(15)
+    a._spin_bg_bright.setValue(-30)
+    kw = _layout_kwargs(a.get_config())
+    assert kw["brightness"] == 15 and kw["bg_brightness"] == -30
+    b = OptionsPanel()
+    b.set_config(a.get_config())
+    assert b._spin_bright.value() == 15 and b._spin_bg_bright.isEnabled()
+    b._reset_brightness()
+    assert b.get_config()["brightness"] == 0

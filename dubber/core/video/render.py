@@ -23,6 +23,48 @@ _ENABLE_MAX_TERMS = 50   # FFmpeg's expression parser fails above 100 terms
 _ENABLE_MERGE_GAP = 0.3  # seconds — bridge tiny gaps between consecutive subtitles
 
 
+# Brightness options, in % (−50 … +50): FFmpeg eq brightness = % / 200 (±0.25)
+BRIGHTNESS_MIN, BRIGHTNESS_MAX = -50, 50
+DEFAULT_BG_BRIGHTNESS = -12      # the 9:16 blurred background, a little darker than the video
+
+
+def _eq_brightness(pct: int) -> str:
+    return f"eq=brightness={pct / 200:.3f}"
+
+
+def portrait_size(scale: "str | None") -> tuple[int, int]:
+    """9:16 canvas for a "-2:N" resolution choice: N is the short side (720p → 720×1280);
+    original / unknown → 1080×1920, TikTok's size."""
+    try:
+        short = int(str(scale).rsplit(":", 1)[1]) if scale else 1080
+    except (IndexError, ValueError):
+        short = 1080
+    short = max(2, short) & ~1
+    return short, round(short * 16 / 9 / 2) * 2
+
+
+def _portrait_filter(src: str, out: str, w: int, h: int,
+                     bg_brightness: int = DEFAULT_BG_BRIGHTNESS) -> str:
+    """*src* fitted into a w×h canvas; the empty bands show the same video, scaled to
+    cover, blurred, brightness changed by *bg_brightness* %. The blur runs at quarter size."""
+    bg_eq = f"{_eq_brightness(bg_brightness)}," if bg_brightness else ""
+    qw, qh = max(2, w // 4) & ~1, max(2, h // 4) & ~1
+    return (f"{src}split[pt_fg][pt_bg];"
+            f"[pt_bg]scale={qw}:{qh}:force_original_aspect_ratio=increase,crop={qw}:{qh},"
+            f"boxblur={_blur_radius(qw, qh) or 1}:2,{bg_eq}"
+            f"scale={w}:{h},setsar=1[pt_blur];"
+            f"[pt_fg]scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2"
+            f":flags=lanczos,setsar=1[pt_fit];"
+            f"[pt_blur][pt_fit]overlay=(W-w)/2:(H-h)/2{out}")
+
+
+def _blur_radius(w: int, h: int) -> int:
+    """boxblur radius for a w×h crop: FFmpeg needs 2·r ≤ the chroma plane's smaller side
+    (YUV 4:2:0 = half size, rounded down), else "Invalid chroma_param radius"."""
+    chroma = min(w, h) // 2
+    return max(0, min(15, chroma // 2 - 1))
+
+
 def _enable_groups(intervals: list[tuple[float, float]]) -> list[str]:
     """Merge overlapping/near-touching (start, end) intervals, then return
     `between(t,s,e)+…` expressions of at most _ENABLE_MAX_TERMS terms each."""
@@ -177,6 +219,9 @@ class VideoRenderer:
         logo: "tuple | None" = None,
         flip: bool = False,
         music: "tuple | None" = None,
+        portrait: bool = False,
+        brightness: int = 0,
+        bg_brightness: int = DEFAULT_BG_BRIGHTNESS,
     ) -> Path:
         """M5: burn subtitles + blur band into video, mix audio, re-encode.
 
@@ -196,6 +241,10 @@ class VideoRenderer:
                   are picked on the mirrored preview, so they apply after it.
             music: (file, volume 0–1, video seconds) — the user's own music, looped to the
                    video's length and faded out at the end, mixed with the other tracks.
+            portrait: phone 9:16 output (portrait_size(scale)): the finished frame (with
+                      subtitles / logo) fitted in the middle over a blurred copy of itself.
+            brightness: picture brightness in % (−50 … +50; subtitles / logo unchanged).
+            bg_brightness: the 9:16 blurred background's brightness in %.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         encoder = _detect_hw_encoder(self._ffmpeg)
@@ -229,6 +278,9 @@ class VideoRenderer:
         if flip:
             vf_parts.append("[0:v]hflip[mirrored]")
             current = "[mirrored]"
+        if brightness:
+            vf_parts.append(f"{current}{_eq_brightness(brightness)}[lit]")
+            current = "[lit]"
 
         # Blur boxes: each entry is (start_sec, end_sec, x, y, w, h).
         # ONE crop/blur over the union rectangle, shown while any subtitle is on screen.
@@ -243,8 +295,7 @@ class VideoRenderer:
             bw = max(b[2] + b[4] for b in blur_band) - bx
             bh = max(b[3] + b[5] for b in blur_band) - by
             groups = _enable_groups([(s, e) for s, e, *_ in blur_band])
-            # Radius must be < min(bw,bh)/4 for chroma plane (YUV420 is half-res)
-            blur_r = max(3, min(15, bw // 4, bh // 4))
+            blur_r = _blur_radius(bw, bh)
             n = len(groups)
             vf_parts.append(f"{current}split[sa][sb]")
             blur_outs = "".join(f"[sblur{i}]" for i in range(n))
@@ -266,14 +317,19 @@ class VideoRenderer:
             vf_parts.append(f"{current}[logo]overlay={lx}:{ly}[with_logo]")
             current = "[with_logo]"
 
-        _has_post = bool(scale or fps)
+        _has_post = bool(scale or fps or portrait)
         _pre_post = "[after_sub]" if _has_post else "[vout]"
         vf_parts.append(f"{current}{ass_filter}{_pre_post}")
+        if portrait:
+            pw, ph = portrait_size(scale)
+            vf_parts.append(_portrait_filter("[after_sub]", "[vout]" if not fps else
+                                             "[after_scale]", pw, ph, bg_brightness))
+            scale = None        # the canvas size already follows the resolution choice
         if scale:
             _pre_fps = "[after_scale]" if fps else "[vout]"
             vf_parts.append(f"[after_sub]scale={scale}:flags=lanczos{_pre_fps}")
         if fps:
-            _fps_in = "[after_scale]" if scale else "[after_sub]"
+            _fps_in = "[after_scale]" if scale or portrait else "[after_sub]"
             vf_parts.append(f"{_fps_in}fps=fps={fps}[vout]")
         vf = ";".join(vf_parts)
 
