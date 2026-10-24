@@ -102,6 +102,9 @@ dubber/
     │   ├── vieneu_tts.py    # VieNeu-TTS v3 Turbo (ONNX/CPU, 48 kHz, không chỉnh tốc độ)
     │   └── voice_library.py # giọng VieNeu có sẵn + giọng clone (user-data/voices/vieneu)
     ├── audio/
+    │   ├── fit.py           # TimingFitter: xếp câu TTS không đè nhau, nghỉ theo dấu câu, cắt im lặng,
+    │   │                    # tăng tốc đều ≤1,15× (1 câu ≤1,3×), trễ ≤1,5s; câu quá dài → Groq rút gọn
+    │   ├── mixer.py         # build_dub_wav(): ghép dub.wav đúng sample rate của giọng (không resample)
     │   └── separate.py      # tách nhạc nền (audio-separator hoặc FFmpeg fallback)
     ├── video/
     │   ├── subtitles.py     # build_ass(): cắt câu thành dòng 1 dòng, viền/màu chữ
@@ -184,7 +187,7 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
       bản sửa ghi đè `translations/<bộ dịch>.json` nên chạy lại dùng tiếp
 - [x] UI: hàng đợi dạng thẻ (chọn nhiều, kéo đổi thứ tự, chuột phải, nhân bản), tiến trình % +
       thời gian còn lại, thông báo, ⚙ Cài đặt, ảnh xem trước phụ đề, nhớ cửa sổ/tab/hàng đợi
-- [x] Xuất kèm `<tên>_vi.txt` cạnh `<tên>_vi.mp4`: prompt ChatGPT (tiêu đề + mô tả + 5 hashtag) đã ghép lời thoại
+- [x] Xuất kèm `<tên>_vi.txt` cạnh `<tên>_vi.mp4`: prompt ChatGPT (tiêu đề + mô tả + 5 hashtag + chữ ảnh bìa + bình luận ghim) đã ghép lời thoại
 - [x] Prompt AI (sửa bản dịch, TikTok) sửa được trong ⚙ Cài đặt, lưu `settings.json`, có ↺ Mặc định
 - [x] Bỏ dịch thủ công (cấu hình cũ `translator: manual` chạy như `auto`); bỏ mọi tự dọn cache
       (chỉ nút "Dọn cache"); lăn chuột không đổi giá trị ô chọn / ô số / thanh trượt

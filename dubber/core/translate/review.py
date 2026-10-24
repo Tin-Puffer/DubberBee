@@ -13,17 +13,29 @@ SYLLABLES_PER_SEC: float = 5.0
 MAX_SPEEDUP: float = 1.3
 
 DEFAULT_INSTRUCTIONS = """\
-Bạn là biên tập viên lồng tiếng phim Trung → Việt. Bên dưới là bản dịch máy.
+Bạn là biên tập viên lồng tiếng phim Trung → Việt. Bên dưới là bản dịch máy của một video;
+bản tiếng Việt sẽ được máy đọc (TTS) và đốt thành phụ đề.
 Mỗi dòng có dạng:  số. [thời lượng] câu tiếng Trung → bản dịch tiếng Việt
 (một số dòng có thêm "⚠ ..." là ghi chú cảnh báo, không phải nội dung).
 
+TRƯỚC KHI SỬA: đọc hết một lượt để nắm câu chuyện, nhân vật và ai đang nói với ai.
+
+LƯU Ý VỀ TIẾNG TRUNG: câu tiếng Trung do máy nghe chép lại nên có thể sai chữ đồng âm,
+thiếu chữ hoặc bị cắt giữa câu. Khi một câu vô lý, hãy đoán nghĩa đúng theo ngữ cảnh
+câu trước / câu sau, đừng dịch máy móc chữ sai.
+
 NHIỆM VỤ — sửa bản dịch tiếng Việt cho:
-1. Đúng nghĩa câu tiếng Trung, tự nhiên, đúng văn nói của phim.
-2. Xưng hô nhất quán giữa các nhân vật suốt đoạn (anh/em, ta/ngươi, sư phụ/con…).
-3. Đủ ngắn để đọc kịp trong thời lượng ghi trong [ ], khoảng 4–5 chữ mỗi giây.
-   Câu có "⚠ dài" BẮT BUỘC phải rút gọn.
+1. Đúng nghĩa và mạch truyện, tự nhiên như người Việt kể chuyện / nói chuyện thật.
+2. Xưng hô nhất quán suốt video (người kể "tôi"; anh/em, ta/ngươi, sư phụ/con… theo quan hệ).
+3. Đủ ngắn để đọc kịp: tối đa khoảng 4 chữ cho mỗi giây ghi trong [ ]
+   (ví dụ [2,5s] → khoảng 10 chữ). Câu có "⚠ dài" BẮT BUỘC rút gọn: bỏ từ thừa,
+   dùng cách nói gọn hơn, nhưng không làm mất ý chính.
 4. Tên riêng gọi giống nhau từ đầu đến cuối.
-5. Không thêm, không bỏ, không gộp, không tách câu. Mỗi số giữ đúng một câu.
+5. Dễ đọc thành tiếng: không dùng ký hiệu hay viết tắt (24/24, %, &, v.v., TP.), không
+   dùng ngoặc; số đếm nhỏ viết bằng chữ khi tự nhiên hơn ("hai người", không "2 người").
+6. Không thêm, không bỏ, không gộp, không tách câu. Mỗi số giữ đúng một câu. Câu bị cắt
+   ngang thì dịch đúng phần của câu đó sao cho đọc nối với câu kế vẫn liền mạch.
+7. Còn sót chữ Hán trong bản dịch thì dịch nốt sang tiếng Việt.
 
 ĐỊNH DẠNG TRẢ LỜI — làm đúng tuyệt đối:
 - Chỉ trả về MỘT khối code duy nhất, mở bằng ```text và đóng bằng ```.
