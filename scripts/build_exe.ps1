@@ -38,6 +38,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install dependencies failed" }
 
 # -- 2. resources\: FFmpeg -----------------------------------------------------
 Write-Host "[2/5] Preparing resources\..." -ForegroundColor Yellow
+New-Item -ItemType Directory -Force "resources" | Out-Null   # absent in a fresh checkout
 $ffmpeg_src = $null
 $candidates = @()
 if ($env:FFMPEG_DIR) { $candidates += $env:FFMPEG_DIR }
