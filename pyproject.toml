@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dubber"
-version = "0.3.0"
+version = "0.4.0"
 description = "Vietnamese dubbing tool for Chinese videos"
 requires-python = ">=3.10"
 dependencies = [
