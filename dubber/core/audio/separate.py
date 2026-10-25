@@ -128,26 +128,32 @@ UVR_FILES = {
 def download_uvr_model(dest: "Path | None" = None) -> Path:
     """Make sure the MDX-Net model + lists are in *dest* (default: the app's UVR dir):
     release mirror first, audio-separator's own download otherwise. Returns the dir."""
-    import urllib.request
     from dubber.core.asr.model_manager import MODELS_MIRROR_URL
+    from dubber.core.utils.download import fetch
 
     d = dest or _uvr_model_dir()
     d.mkdir(parents=True, exist_ok=True)
     try:
         for local, asset in UVR_FILES.items():
             if not (d / local).is_file():
-                tmp = d / (local + ".part")
-                urllib.request.urlretrieve(f"{MODELS_MIRROR_URL}/{asset}", tmp)
-                tmp.replace(d / local)
+                fetch(f"{MODELS_MIRROR_URL}/{asset}", d / local)
     except Exception as exc:
         log.warning("UVR mirror unavailable (%s) — downloading via audio-separator", exc)
     if not all((d / f).is_file() for f in UVR_FILES):
-        import tempfile
-        from audio_separator.separator import Separator
-        with tempfile.TemporaryDirectory() as out:
-            # load_model downloads the model and the lists it needs to identify it
-            Separator(output_dir=out, model_file_dir=str(d),
-                      log_level=logging.WARNING).load_model(MODEL_NAME)
+        download_uvr_upstream(d)
+    return d
+
+
+def download_uvr_upstream(d: "Path | None" = None) -> Path:
+    """audio-separator's own download (its model repo) — the mirror's original source."""
+    import tempfile
+    from audio_separator.separator import Separator
+    d = d or _uvr_model_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as out:
+        # load_model downloads the model and the lists it needs to identify it
+        Separator(output_dir=out, model_file_dir=str(d),
+                  log_level=logging.WARNING).load_model(MODEL_NAME)
     return d
 
 
@@ -163,8 +169,13 @@ def _uvr_model_dir() -> Path:
     """Persistent directory for UVR MDX-Net model files (survives across runs)."""
     import sys
     if getattr(sys, 'frozen', False):
-        # Bundled exe: use resources/models/uvr/ inside PyInstaller's _internal/
-        return Path(sys._MEIPASS) / "resources" / "models" / "uvr"
+        # Bundled exe: resources/models/uvr/ inside PyInstaller's _internal/ when the build
+        # carries models, else the user-data models dir (downloaded on first run)
+        bundled = Path(sys._MEIPASS) / "resources" / "models" / "uvr"
+        if (bundled / MODEL_NAME).is_file():
+            return bundled
+        from dubber.core.asr.model_manager import _user_models_dir
+        return _user_models_dir() / "uvr"
     try:
         from platformdirs import user_cache_dir
         return Path(user_cache_dir("dubber", "dubber")) / "uvr-models"

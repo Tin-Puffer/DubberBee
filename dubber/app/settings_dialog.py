@@ -209,6 +209,48 @@ class PromptRow(QWidget):
         self.refresh()
 
 
+class UpdateRow(QWidget):
+    """Version + "check at start" + Kiểm tra cập nhật (the checker lives in the main window)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from dubber import __version__
+        from dubber.core.utils.settings import load_settings
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._lbl = QLabel(f"Phiên bản {__version__}", self)
+        self._lbl.setStyleSheet(f"color: {g._TXT_MID}; font-size: 12px;")
+        self._btn = _btn("Kiểm tra cập nhật", self)
+        self._btn.clicked.connect(self._check)
+        self._btn.setEnabled(False)
+        row.addWidget(self._lbl, 1)
+        row.addWidget(self._btn)
+        v.addLayout(row)
+        self._chk = QCheckBox("Tự kiểm tra bản mới mỗi khi mở app", self)
+        self._chk.setChecked(load_settings().get("check_updates", True))
+        self._chk.toggled.connect(self._save)
+        v.addWidget(self._chk)
+        self._checker = None
+
+    def set_checker(self, checker) -> None:
+        self._checker = checker
+        self._btn.setEnabled(True)
+
+    def _check(self) -> None:
+        from dubber import __version__
+        self._lbl.setText(f"Phiên bản {__version__} · đang kiểm tra…")
+        self._checker.check(manual=True,
+                            on_result=lambda t: self._lbl.setText(f"Phiên bản {__version__} · {t}"))
+
+    def _save(self, on: bool) -> None:
+        from dubber.core.utils.settings import load_settings, save_settings
+        st = load_settings()
+        st["check_updates"] = on
+        save_settings(st)
+
+
 class SettingsDialog(QDialog):
     """Kept alive by the main window (its rows hold state); shown with ⚙ Cài đặt."""
 
@@ -251,6 +293,11 @@ class SettingsDialog(QDialog):
 
         self.storage = StorageRow(self)
         section("Cache", self.storage)
+
+        self.updates = UpdateRow(self)
+        section("Cập nhật", self.updates,
+                note="Bản mới tải về từ GitHub và tự thay app cũ — cài đặt, giọng clone, "
+                     "cache và dữ liệu đã tải được giữ nguyên.")
 
         close = QHBoxLayout(); close.addStretch(1)
         btn = _btn("Đóng", self)

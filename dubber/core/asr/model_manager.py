@@ -7,6 +7,7 @@ from typing import Optional
 
 from platformdirs import user_data_dir
 
+from dubber import RELEASES_REPO
 from dubber.core.utils.ffmpeg_locator import _project_root
 
 SHERPA_MODEL_NAME = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
@@ -17,7 +18,7 @@ PIPER_SUBDIR = "piper"
 
 # Every model the app needs is mirrored as an asset of this GitHub release (same file
 # name as upstream; extra packs below). Tried first, the original source is the fallback.
-MODELS_MIRROR_URL = "https://github.com/Tin-Puffer/DubberBee/releases/download/models-v1"
+MODELS_MIRROR_URL = f"https://github.com/{RELEASES_REPO}/releases/download/models-v1"
 VIENEU_ARCHIVE = "vieneu-v3-turbo-onnx.tar"   # vieneu/{VieNeu-TTS-v3-Turbo,MOSS-…}/…
 
 # VieNeu-TTS v3 Turbo (ONNX/CPU) + its MOSS audio codec, pinned commits. Stored as plain
@@ -120,8 +121,13 @@ def download_vieneu_models(dest: Optional[Path] = None) -> Path:
             return root
     except Exception as exc:
         logging.getLogger(__name__).warning("VieNeu mirror unavailable (%s) — using HuggingFace", exc)
+    return download_vieneu_upstream(base)
 
+
+def download_vieneu_upstream(base: Path) -> Path:
+    """The pinned HuggingFace commits into *base*/vieneu/ (the mirror's original source)."""
     from huggingface_hub import snapshot_download
+    root = base / VIENEU_SUBDIR
     for folder, (repo, rev, patterns) in VIENEU_REPOS.items():
         snapshot_download(repo, revision=rev, local_dir=root / folder, allow_patterns=patterns)
     return root
@@ -131,12 +137,13 @@ def _download_vieneu_archive(base: Path) -> None:
     import shutil
     import tarfile
     import tempfile
-    import urllib.request
+
+    from dubber.core.utils.download import fetch
 
     base.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=base) as tmp:
         tar = Path(tmp) / VIENEU_ARCHIVE
-        urllib.request.urlretrieve(f"{MODELS_MIRROR_URL}/{VIENEU_ARCHIVE}", tar)
+        fetch(f"{MODELS_MIRROR_URL}/{VIENEU_ARCHIVE}", tar)
         with tarfile.open(tar) as tf:
             tf.extractall(tmp, filter="data")   # refuses absolute / ".." paths
         target = base / VIENEU_SUBDIR

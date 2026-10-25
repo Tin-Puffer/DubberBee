@@ -19,8 +19,9 @@ plus a ready-to-paste TikTok prompt (`<video>_vi.txt`) next to every exported vi
 ## Install
 
 Clone, then one command (deps → `.venv` → packages → models → tests). `--all` / `-All`
-downloads every model (16 Piper voices, VieNeu-TTS, separation; ~2 GB) from this repo's
-[`models-v1` release](https://github.com/Tin-Puffer/DubberBee/releases/tag/models-v1):
+downloads every model (16 Piper voices, VieNeu-TTS, separation; ~2 GB) from the
+[`models-v1` release](https://github.com/Tin-Puffer/DubberBee-releases/releases/tag/models-v1)
+of the public releases repo (built apps: [DubberBee-releases](https://github.com/Tin-Puffer/DubberBee-releases/releases/latest)):
 
 ```bash
 git clone https://github.com/Tin-Puffer/DubberBee.git && cd DubberBee

@@ -33,9 +33,11 @@ powershell -ExecutionPolicy Bypass -File setup_dev.ps1 -All
 
 - FFmpeg **phải có libass** (filter `ass`) để đốt phụ đề: Mac dùng `ffmpeg-full`
   (bản `ffmpeg` thường của Homebrew thiếu libass), Windows dùng Gyan full build.
-- Models tải từ GitHub Release `models-v1` của repo (github.com/Tin-Puffer/DubberBee, ~1,7GB:
-  SenseVoice, FSMN/Silero VAD, 16 giọng piper, gói VieNeu, UVR MDX-Net), lỗi thì tải từ nguồn gốc.
-  Địa chỉ mirror: `MODELS_MIRROR_URL` trong `dubber/core/asr/model_manager.py`.
+- Models tải từ GitHub Release `models-v1` của repo **public riêng cho bản phát hành**
+  (github.com/Tin-Puffer/DubberBee-releases, ~1,7GB: SenseVoice, FSMN/Silero VAD, 16 giọng piper,
+  gói VieNeu, UVR MDX-Net), lỗi thì tải từ nguồn gốc (k2-fsa, ModelScope, HuggingFace,
+  audio-separator). Tên repo đặt **một chỗ**: `RELEASES_REPO` trong `dubber/__init__.py`
+  (mirror models + tự cập nhật đều đọc từ đây; repo code có thể để private).
 - API key — Mac: thêm vào `~/.zshrc`; Windows: `setx GROQ_API_KEY "gsk_..."`
   ```bash
   export GROQ_API_KEY="gsk_..."
@@ -76,7 +78,9 @@ dubber/
 │   ├── queue_card.py        # thẻ video trong hàng đợi (trạng thái + nút theo trạng thái)
 │   ├── progress.py          # % tổng + thời gian còn lại (trừ lúc chờ người dùng)
 │   ├── wait_dialogs.py      # hỏi khi Groq giới hạn + mở file/thư mục
-│   ├── settings_dialog.py   # ⚙ Cài đặt: Groq API key (kiểm tra + đèn), thông báo, prompt AI, cache
+│   ├── settings_dialog.py   # ⚙ Cài đặt: Groq API key (kiểm tra + đèn), thông báo, prompt AI, cache,
+│   │                        # cập nhật (phiên bản, tự kiểm tra khi mở, nút kiểm tra)
+│   ├── update_dialog.py     # tải models lần đầu (trước cửa sổ chính) + hộp thoại cập nhật app
 │   ├── prompt_dialog.py     # soạn prompt AI (sửa bản dịch / TikTok): lưu, khôi phục mặc định
 │   ├── preview.py           # khung hình + phụ đề mẫu (gần đúng) trong "Thông tin video gốc"
 │   ├── notify.py            # thông báo hệ thống + Dock khi xong / lỗi / cần người dùng
@@ -86,6 +90,10 @@ dubber/
 │   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
 └── core/
     ├── pipeline.py          # run_m5() — điều phối toàn bộ pipeline
+    ├── model_setup.py       # danh sách models + tải lần đầu vào user-data (mirror models-v1 → nguồn gốc,
+    │                        # sha256, tải tiếp khi đứt); app đóng gói KHÔNG kèm models
+    ├── updater.py           # tự cập nhật: GitHub Releases vX.Y.Z có Dubber-macos/windows.zip → tải,
+    │                        # giải nén cạnh app, script đợi app thoát → đổi thư mục → mở lại
     ├── asr/
     │   ├── sensevoice_sherpa.py # sherpa-onnx SenseVoice; VAD FSMN (mặc định) / Silero
     │   ├── fsmn_vad.py      # FSMN-VAD trên onnxruntime (port từ funasr-onnx, MIT)
@@ -131,6 +139,7 @@ dubber/
     │                        # brightness / bg_brightness: độ sáng hình / nền mờ (%, eq = % / 200)
     └── utils/
         ├── ffmpeg_locator.py # tìm ffmpeg: resources/ → PATH
+        ├── download.py      # tải HTTP: tải tiếp (.part + Range), tiến trình, hủy, sha256
         ├── gpu.py           # gpu_lock: MPS/CoreML chỉ 1 luồng (tách nhạc ↔ dịch offline), 2 luồng = crash Metal
         └── job_cache.py     # chữ ký *.sig.json: chỉ tái dùng asr/translate khi cấu hình khớp
 ```
@@ -156,7 +165,9 @@ dubber/
 
 ## Build exe/app
 
-Chạy sau khi setup xong. Script tự copy FFmpeg + models vào `resources/` rồi chạy PyInstaller.
+Chạy sau khi setup xong. Script tự copy FFmpeg vào `resources/` rồi chạy PyInstaller.
+**Không đóng gói models** (zip Mac ~530MB thay vì 1,9GB): lần đầu mở, app tải ~1,8GB models từ
+Release `models-v1` vào thư mục user-data — giữ nguyên qua các lần cập nhật.
 
 ```bash
 # Mac → dist/Dubber.app + dist/Dubber-macos.zip
@@ -168,9 +179,17 @@ powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
 ```
 
 Không build chéo được: bản Windows build trên GitHub Actions (`.github/workflows/build-windows.yml`,
-chạy khi push nhánh `main-windown-edition`) → artifact `Dubber-windows` + đính vào Release `v0.1.0`.
+chạy khi push nhánh `main-windown-edition`) → artifact `Dubber-windows` + đính vào Release
+`RELEASE_TAG` của repo `DubberBee-releases`.
 
 Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chuột phải → Open.
+
+**Phát hành bản mới (để app tự cập nhật):** tăng `__version__` (`dubber/__init__.py`, Info.plist đọc
+từ đây) + `pyproject.toml`, tạo Release tag `vX.Y.Z` **trong repo `Tin-Puffer/DubberBee-releases`**
+(không draft / pre-release), đính đúng tên `Dubber-macos.zip` và `Dubber-windows.zip`
+(`RELEASE_TAG` trong workflow; CI đẩy lên đó bằng secret `RELEASES_TOKEN`). App đang chạy thấy tag
+mới hơn → hỏi người dùng, ghi chú Release hiện trong popup. Đổi models → Release `models-v2` +
+sửa `MODELS_MIRROR_URL`.
 
 ---
 
@@ -178,7 +197,8 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
 
 1. **Không bao giờ** log hoặc print API key — key chỉ được đọc qua `os.environ`
 2. `render_final()` nhận `scale`, `fps`, `crf`, `encoder_preset`, `audio_bitrate` — không hardcode
-3. Khi chạy từ `.exe` (`sys.frozen = True`), models nằm ở `sys._MEIPASS/resources/models/`
+3. Khi chạy từ `.exe` (`sys.frozen = True`), models nằm ở thư mục user-data (`_user_models_dir()`,
+   tải lần đầu); `sys._MEIPASS/resources/models/` chỉ còn được dò nếu bản build có kèm
 4. `AutoTranslator` tự fallback Groq → Local; nếu cả hai fail thì raise RuntimeError rõ ràng
 5. FFmpeg được tìm theo thứ tự: `resources/ffmpeg[.exe]` → Homebrew `ffmpeg-full` (macOS) → PATH
 
@@ -216,6 +236,8 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
       câu trả lời lưu cache, tới lượt chạy không hỏi lại (`translations/<bộ dịch>.reviewed`)
 - [x] Tên hiển thị **Dubber Bee** + logo ong (`dubber/assets/logo/`); thư mục dữ liệu, service
       keyring `Dubber`, tên file build `Dubber.app`/`Dubber.exe` giữ nguyên
+- [x] Bản đóng gói không kèm models (tải lần đầu vào user-data) + tự cập nhật từ GitHub Releases
+      (⚙ Cài đặt → Cập nhật); gỡ cài đặt (Uninstall / xóa dữ liệu) để sau
 
 ---
 

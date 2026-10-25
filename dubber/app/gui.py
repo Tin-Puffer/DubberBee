@@ -2639,6 +2639,18 @@ class MainWindow(QWidget):
 
         self._refresh_buttons()
 
+    def _is_busy(self) -> bool:
+        return self._running >= 0 or self._prep is not None
+
+    def start_update_check(self) -> None:
+        """Silent check a few seconds after start (frozen app, unless turned off)."""
+        from dubber.app.update_dialog import UpdateChecker
+        from dubber.core.utils.settings import load_settings
+        self._updates = UpdateChecker(self, self._is_busy)
+        self._settings_dlg.updates.set_checker(self._updates)
+        if getattr(sys, "frozen", False) and load_settings().get("check_updates", True):
+            QTimer.singleShot(3000, self._updates.check)
+
     def _open_settings(self):
         self._settings_dlg.show()
         self._settings_dlg.raise_()
@@ -3619,6 +3631,8 @@ class MainWindow(QWidget):
         self._opts.mix_preview.wait(3000)   # a preview window still being prepared
         self._probe_runner.wait_all(3000)   # an ffprobe still reading a video
         self._frame_runner.wait_all(3000)
+        if getattr(self, "_updates", None) is not None:
+            self._updates.wait()
         super().closeEvent(event)
 
 
@@ -3650,6 +3664,12 @@ def run_gui() -> None:
     pal.setColor(QPalette.HighlightedText, QColor("#000"))
     app.setPalette(pal)
 
+    # The app ships without models: the first run downloads them to the user-data dir
+    from dubber.app.update_dialog import ensure_models
+    if not ensure_models():
+        return
+
     win = MainWindow()
     win.show()
+    win.start_update_check()
     sys.exit(app.exec())

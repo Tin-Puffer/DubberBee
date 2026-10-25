@@ -3,7 +3,7 @@
 #
 # Runs on every push to main-windown-edition, or by hand (Actions → Build Windows → Run).
 # The zip is kept as a workflow artifact and, when RELEASE_TAG names an existing
-# release, uploaded to it.
+# release of Tin-Puffer/DubberBee-releases, uploaded to it (needs secret RELEASES_TOKEN).
 name: Build Windows
 
 on:
@@ -15,7 +15,7 @@ env:
   RELEASE_TAG: v0.3.0
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -46,7 +46,7 @@ jobs:
           .venv\Scripts\python.exe -m pip install --upgrade pip
           .venv\Scripts\python.exe -m pip install -e ".[dev,offline,vieneu]"
 
-      - name: Models (ASR, VAD, 16 voices, VieNeu, UVR)
+      - name: Models for the tests (not bundled)
         shell: pwsh
         run: .venv\Scripts\python.exe spike\download_models.py --all
 
@@ -65,17 +65,17 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          $m = "dist\Dubber\_internal\resources\models"
-          foreach ($need in "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\model.int8.onnx",
-                            "fsmn-vad\model_quant.onnx", "silero_vad.onnx",
-                            "uvr\UVR-MDX-NET-Inst_HQ_5.onnx", "vieneu") {
-            if (-not (Test-Path "$m\$need")) { throw "missing in bundle: $need" }
-          }
+          # Models are downloaded by the app on first run, never bundled
+          if (Test-Path "dist\Dubber\_internal\resources\models") { throw "models must not be bundled" }
           # pyvi's word-segmentation model (subtitle line cutting)
           if (-not (Test-Path "dist\Dubber\_internal\pyvi\models\pyvi3.pkl")) { throw "missing in bundle: pyvi model" }
-          $voices = (Get-ChildItem "$m\piper" -Filter *.onnx).Count
-          if ($voices -lt 16) { throw "only $voices piper voices bundled" }
-          Get-ChildItem $m | ForEach-Object { "{0,-60} {1,8:N0} MB" -f $_.Name, ((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB) }
+          # Put the downloaded models where the frozen app looks, so it opens the main window
+          # (not the first-run download dialog)
+          $um = & .venv\Scripts\python.exe -c "from dubber.core.asr.model_manager import _user_models_dir; print(_user_models_dir())"
+          $uvr = & .venv\Scripts\python.exe -c "from dubber.core.audio.separate import _uvr_model_dir; print(_uvr_model_dir())"
+          New-Item -ItemType Directory -Force $um | Out-Null
+          Copy-Item spike\models\* $um -Recurse -Force
+          Copy-Item $uvr "$um\uvr" -Recurse -Force
           $p = Start-Process dist\Dubber\Dubber.exe -PassThru
           Start-Sleep -Seconds 45
           if ($p.HasExited) { throw "Dubber.exe exited early (code $($p.ExitCode))" }
@@ -93,11 +93,16 @@ jobs:
       - name: Upload to release
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Releases live in the public DubberBee-releases repo (what installed apps read).
+          # GITHUB_TOKEN cannot write there: secret RELEASES_TOKEN = fine-grained token with
+          # Contents read/write on Tin-Puffer/DubberBee-releases.
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          RELEASES_REPO: Tin-Puffer/DubberBee-releases
         run: |
           $size = (Get-Item dist\Dubber-windows.zip).Length
           Write-Host "Zip: $([math]::Round($size / 1MB)) MB"
           if ($size -ge 2GB) { Write-Warning "Zip >= 2 GiB: too big for a release asset (artifact only)"; exit 0 }
-          gh release view $env:RELEASE_TAG *> $null
-          if ($LASTEXITCODE -ne 0) { Write-Host "No release $env:RELEASE_TAG - artifact only"; exit 0 }
-          gh release upload $env:RELEASE_TAG dist\Dubber-windows.zip --clobber
+          if (-not $env:GH_TOKEN) { Write-Warning "No RELEASES_TOKEN secret - artifact only"; exit 0 }
+          gh release view $env:RELEASE_TAG -R $env:RELEASES_REPO *> $null
+          if ($LASTEXITCODE -ne 0) { Write-Host "No release $env:RELEASE_TAG in $env:RELEASES_REPO - artifact only"; exit 0 }
+          gh release upload $env:RELEASE_TAG dist\Dubber-windows.zip -R $env:RELEASES_REPO --clobber

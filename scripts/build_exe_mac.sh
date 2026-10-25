@@ -6,6 +6,7 @@
 #  Prereqs: scripts/setup_mac.sh has been run (venv + deps + models + ffmpeg-full)
 #  Output:  dist/Dubber.app   (and dist/Dubber-macos.zip)
 #
+#  Models are not bundled: the app downloads them (~1.8 GB) on first run.
 #  FFmpeg: Homebrew ffmpeg-full (has libass for subtitle burn-in) + its dylibs,
 #  made self-contained with dylibbundler → the .app runs without Homebrew.
 # ============================================================================
@@ -31,8 +32,6 @@ echo "[1/5] Installing PyInstaller + missing dependencies..."
 
 # ── 2. resources/: FFmpeg ─────────────────────────────────────────────────────
 echo "[2/5] Preparing resources/..."
-mkdir -p resources/models/piper
-
 FFDIR=""
 for d in /opt/homebrew/opt/ffmpeg-full/bin /usr/local/opt/ffmpeg-full/bin; do
     [[ -x "$d/ffmpeg" ]] && { FFDIR="$d"; break; }
@@ -59,35 +58,9 @@ for f in resources/ffmpeg-mac/bin/* resources/ffmpeg-mac/lib/*; do codesign --fo
 has_ass resources/ffmpeg-mac/bin/ffmpeg || { echo "✗ bundled ffmpeg does not run"; exit 1; }
 echo "      FFmpeg: $FFDIR"
 
-# ── 3. resources/models: ASR, VAD (FSMN + Silero), piper voices ──────────────
-SHERPA=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
-if [[ ! -f "spike/models/$SHERPA/tokens.txt" ]]; then
-    echo "      Models missing → downloading"
-    "$PY" spike/download_models.py
-fi
-# Only what the app loads: model.int8.onnx + tokens.txt (skip test_wavs, fp32 model, etc.)
-mkdir -p "resources/models/$SHERPA"
-cp -f "spike/models/$SHERPA/model.int8.onnx" "spike/models/$SHERPA/tokens.txt" "resources/models/$SHERPA/"
-cp -f spike/models/silero_vad.onnx resources/models/
-[[ -f spike/models/fsmn-vad/config.yaml ]] || "$PY" spike/download_models.py
-mkdir -p resources/models/fsmn-vad
-cp -f spike/models/fsmn-vad/model_quant.onnx spike/models/fsmn-vad/config.yaml \
-      spike/models/fsmn-vad/am.mvn resources/models/fsmn-vad/
-cp -f spike/models/piper/*.onnx spike/models/piper/*.onnx.json resources/models/piper/
-echo "      Voices: $(ls resources/models/piper/*.onnx | wc -l | tr -d ' ')"
-
-# VieNeu-TTS models (~610 MB): user-data / spike copy, downloaded if missing
-VIENEU_DIR="$("$PY" -c 'from dubber.core.asr.model_manager import find_vieneu_model_dir as f, download_vieneu_models as d; print(f() or d())')"
-rm -rf resources/models/vieneu
-cp -R "$VIENEU_DIR" resources/models/vieneu
-rm -rf resources/models/vieneu/*/.cache
-echo "      VieNeu: $(du -sh resources/models/vieneu | cut -f1)"
-
-# UVR MDX-Net model + audio-separator's model lists, so separation works offline
-UVR_DIR="$("$PY" scripts/fetch_uvr_model.py)"
-rm -rf resources/models/uvr && mkdir -p resources/models/uvr
-cp -f "$UVR_DIR"/*.onnx "$UVR_DIR"/*.json resources/models/uvr/
-echo "      UVR: $(ls resources/models/uvr | tr '\n' ' ')"
+# ── 3. No models in the bundle: the app downloads them on first run into the user-data
+#       dir (kept across updates), so each release zip stays small ────────────────
+rm -rf resources/models
 echo "      resources/ total: $(du -sh resources | cut -f1)"
 
 # ── 4. PyInstaller ────────────────────────────────────────────────────────────

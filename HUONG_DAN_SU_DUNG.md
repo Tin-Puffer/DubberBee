@@ -38,6 +38,13 @@ Tài liệu kỹ thuật cho người phát triển: xem [TECHNICAL.md](TECHNICA
 - **Windows:** giải nén `Dubber-windows.zip` vào thư mục ngắn (vd. `C:\Dubber`), mở `Dubber.exe`
   trong thư mục `Dubber`. Nếu SmartScreen chặn: **More info → Run anyway** (app chưa ký số).
 
+**Lần đầu mở:** app hỏi tải dữ liệu (nhận dạng giọng, giọng đọc, tách nhạc… khoảng 1,8 GB) — bấm
+**Tải về** và chờ. Chỉ tải một lần; mất mạng giữa chừng thì mở lại app sẽ tải tiếp phần còn lại.
+
+**Cập nhật:** khi có bản mới, app tự hỏi lúc mở → **Cập nhật ngay**: app tự tải, đóng lại và mở bản
+mới (không cần xóa bản cũ, cài đặt và dữ liệu giữ nguyên). Kiểm tra bằng tay hoặc tắt tự kiểm tra:
+**⚙ Cài đặt → Cập nhật**. Trên macOS hãy để `Dubber.app` trong *Applications* thì mới tự cập nhật được.
+
 Bản đóng gói đã có sẵn mọi model cần thiết (nhận diện, tách nhạc, giọng đọc), chạy được khi
 không có mạng.
 

@@ -5,8 +5,8 @@
 #  Prereqs: setup_dev.ps1 has been run (venv + deps + models + FFmpeg full build)
 #  Output:  dist\Dubber\Dubber.exe   and   dist\Dubber-windows.zip
 #
-#  Bundled (runs offline, nothing else to install): FFmpeg (with libass), ASR,
-#  FSMN/Silero VAD, piper voices, VieNeu-TTS, UVR MDX-Net, torch + transformers.
+#  Bundled: FFmpeg (with libass), torch + transformers, every Python dependency.
+#  Models are not bundled: the app downloads them (~1.8 GB) on first run.
 #  FFmpeg is taken from $env:FFMPEG_DIR, else the winget Gyan.FFmpeg package, else PATH.
 #  Works in Windows PowerShell 5.1 and PowerShell 7.
 # ============================================================================
@@ -38,8 +38,6 @@ if ($LASTEXITCODE -ne 0) { throw "pip install dependencies failed" }
 
 # -- 2. resources\: FFmpeg -----------------------------------------------------
 Write-Host "[2/5] Preparing resources\..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Force "resources\models\piper" | Out-Null
-
 $ffmpeg_src = $null
 $candidates = @()
 if ($env:FFMPEG_DIR) { $candidates += $env:FFMPEG_DIR }
@@ -67,42 +65,9 @@ foreach ($bin in 'ffmpeg.exe', 'ffprobe.exe') {
 Get-ChildItem $ffmpeg_src -Filter *.dll -ErrorAction SilentlyContinue | Copy-Item -Destination "resources\" -Force
 Write-Host "      FFmpeg: $ffmpeg_src"
 
-# -- 3. resources\models: ASR, VAD (FSMN + Silero), voices, VieNeu, UVR -------
-$sherpa = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17'
-if (-not (Test-Path "spike\models\$sherpa\tokens.txt") -or -not (Test-Path "spike\models\fsmn-vad\config.yaml")) {
-    Write-Host "      Models missing -> downloading"
-    & $py spike\download_models.py
-    if ($LASTEXITCODE -ne 0) { throw "download_models.py failed" }
-}
-# Only what the app loads: model.int8.onnx + tokens.txt (skip test_wavs, fp32 model, ...)
-New-Item -ItemType Directory -Force "resources\models\$sherpa" | Out-Null
-foreach ($f in 'model.int8.onnx', 'tokens.txt') {
-    Copy-Item "spike\models\$sherpa\$f" "resources\models\$sherpa\" -Force
-}
-Copy-Item "spike\models\silero_vad.onnx" "resources\models\" -Force
-New-Item -ItemType Directory -Force "resources\models\fsmn-vad" | Out-Null
-foreach ($f in 'model_quant.onnx', 'config.yaml', 'am.mvn') {
-    Copy-Item "spike\models\fsmn-vad\$f" "resources\models\fsmn-vad\" -Force
-}
-Copy-Item "spike\models\piper\*.onnx", "spike\models\piper\*.onnx.json" "resources\models\piper\" -Force
-Write-Host "      Voices: $((Get-ChildItem 'resources\models\piper' -Filter *.onnx).Count)"
-
-# VieNeu-TTS models (~610 MB): user-data / spike copy, downloaded if missing
-# (last line only: the downloads may print progress first)
-$vieneu_dir = & $py -c "from dubber.core.asr.model_manager import find_vieneu_model_dir as f, download_vieneu_models as d; print(f() or d())" | Select-Object -Last 1
-if ($LASTEXITCODE -ne 0 -or -not $vieneu_dir -or -not (Test-Path $vieneu_dir)) { throw "VieNeu models unavailable" }
-Remove-Item "resources\models\vieneu" -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item $vieneu_dir "resources\models\vieneu" -Recurse
-Get-ChildItem "resources\models\vieneu" -Directory -Recurse -Force -Filter ".cache" | Remove-Item -Recurse -Force
-Write-Host "      VieNeu: $(Dir-MB 'resources\models\vieneu') MB"
-
-# UVR MDX-Net model + audio-separator's model lists, so separation works offline
-$uvr_dir = & $py scripts\fetch_uvr_model.py | Select-Object -Last 1
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $uvr_dir)) { throw "UVR model unavailable" }
-Remove-Item "resources\models\uvr" -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "resources\models\uvr" | Out-Null
-Copy-Item "$uvr_dir\*.onnx", "$uvr_dir\*.json" "resources\models\uvr\" -Force
-Write-Host "      UVR: $((Get-ChildItem 'resources\models\uvr').Name -join ' ')"
+# -- 3. No models in the bundle: the app downloads them on first run into the user-data
+#       dir (kept across updates), so each release zip stays small ---------------
+Remove-Item "resources\models" -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "      resources\ total: $(Dir-MB 'resources') MB"
 
 # -- 4. PyInstaller ------------------------------------------------------------
@@ -123,7 +88,7 @@ Remove-Item $zip -Force -ErrorAction SilentlyContinue
 # Windows' own bsdtar writes zip64 (Compress-Archive breaks on > 2 GB). Call it by full
 # path: Git for Windows puts GNU tar on PATH, which cannot write zip.
 $bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
-# Strongest deflate: the bundle sits just under GitHub's 2 GiB release-asset limit
+# Strongest deflate: smaller download for every update
 & $bsdtar -a -c -f $zip --options zip:compression-level=9 -C dist Dubber
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "      tar failed - falling back to .NET ZipFile"

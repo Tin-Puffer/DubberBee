@@ -35,43 +35,15 @@ MODELS_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT))
 from dubber.core.asr.model_manager import MODELS_MIRROR_URL as MIRROR_URL  # noqa: E402
 
-# ── sherpa-onnx SenseVoice int8 (228 MB, supports punctuation) ──────────────
-SHERPA_MODEL_URL = (
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
-    "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
+# ── Sources: shared with the app's first-run download (dubber/core/model_setup.py) ─
+from dubber.core.model_setup import (  # noqa: E402
+    DEFAULT_PIPER_VOICE, FSMN_VAD_FILES, FSMN_VAD_MODEL_ID, PIPER_VOICES, SHERPA_MODEL_URL,
+    SILERO_VAD_URL,
 )
+
 SHERPA_MODEL_DIR = MODELS_DIR / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
-
-# ── Silero VAD (~0.6 MB) ────────────────────────────────────────────────────
-SILERO_VAD_URL = (
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
-)
-
-# ── FSMN-VAD (FunASR, ~0.5 MB, Apache-2.0) — mirrored as fsmn-vad-<file> ───
-FSMN_VAD_MODEL_ID = "iic/speech_fsmn_vad_zh-cn-16k-common-onnx"
-FSMN_VAD_FILES = ["model_quant.onnx", "config.yaml", "am.mvn"]
 FSMN_VAD_DIR = MODELS_DIR / "fsmn-vad"
-
-# ── piper Vietnamese voices (~60 MB each) — stem → .onnx URL ────────────────
 PIPER_DIR = MODELS_DIR / "piper"
-_RHASSPY = "https://huggingface.co/rhasspy/piper-voices/resolve/main/vi/vi_VN"
-_LAONAMA = "https://huggingface.co/laonama/viet-pipertts/resolve/main/vn"
-_ACUT = "https://huggingface.co/vongocanhthi/acut-piper-vietnamese/resolve/main/piper/vi/vi_VN"
-PIPER_VOICES = {
-    # rhasspy/piper-voices (official)
-    "vi_VN-vais1000-medium": f"{_RHASSPY}/vais1000/medium/vi_VN-vais1000-medium.onnx",
-    "vi_VN-25hours_single-low": f"{_RHASSPY}/25hours_single/low/vi_VN-25hours_single-low.onnx",
-    "vi_VN-vivos-x_low": f"{_RHASSPY}/vivos/x_low/vi_VN-vivos-x_low.onnx",
-    # vongocanhthi/acut-piper-vietnamese (community) — app default voice
-    "vi_VN-thanh_nien_tu_tin-medium":
-        f"{_ACUT}/thanh_nien_tu_tin/medium/vi_VN-thanh_nien_tu_tin-medium.onnx",
-    # laonama/viet-pipertts (community)
-    **{stem: f"{_LAONAMA}/{stem}.onnx" for stem in [
-        "adam1", "calmwoman3688", "kinhphat", "maiphuong", "manhdung", "minhthu",
-        "mytam2", "ngochuyen", "ngochuyennew", "ngocngan3701", "vunga", "yannew",
-    ]},
-}
-DEFAULT_PIPER_VOICE = "vi_VN-thanh_nien_tu_tin-medium"
 
 # ── FunASR llama.cpp binary (Windows x64) ───────────────────────────────────
 FUNASR_BIN_URL = (

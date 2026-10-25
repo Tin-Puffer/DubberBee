@@ -3,7 +3,8 @@
 #
 # Build:  scripts\build_exe.ps1        (Windows) → dist\Dubber\Dubber.exe
 #         scripts/build_exe_mac.sh      (macOS)   → dist/Dubber.app
-# One-directory bundle, ~3 GB (models ~1.8 GB)
+# One-directory bundle, ~1.4 GB. Models are not bundled: the app downloads them on first
+# run into the user-data dir (dubber/core/model_setup.py), kept across updates.
 #
 # What's included:
 #   - dubber Python package
@@ -15,8 +16,7 @@
 #   - audio-separator (MDX-Net music/voice separation) + librosa/scipy
 #   - VieNeu-TTS SDK (ONNX path) + sea-g2p
 #   - FFmpeg/FFprobe binaries (in resources/)
-#   - ASR models, FSMN-VAD, Silero VAD, piper voices, VieNeu models, UVR MDX-Net model
-#     (in resources/models/)
+#   - resources/models/ only if present (the build scripts remove it)
 #
 # Note: HuggingFace models (MarianMT ~300MB, NLLB 1.3B ~5.5GB) download on first use
 #       and are cached in ~/.cache/huggingface (Windows: %USERPROFILE%\.cache\huggingface)
@@ -26,6 +26,7 @@
 #   - gradio (VieNeu's web UI only)
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, copy_metadata
@@ -37,6 +38,9 @@ def _installed(pkg: str) -> bool:
 
 block_cipher = None
 project_root = Path(SPECPATH)
+# Single source of the version (Info.plist; the updater compares it with release tags)
+APP_VERSION = re.search(r'__version__ = "([^"]+)"',
+                        (project_root / 'dubber' / '__init__.py').read_text()).group(1)
 
 # ── Collect packages ───────────────────────────────────────────────────────────
 sherpa_datas,       sherpa_binaries,       sherpa_hiddenimports       = collect_all('sherpa_onnx')
@@ -119,7 +123,7 @@ a = Analysis(
         'dubber.core.translate.local_translator',
         'dubber.core.translate.gemini',
         'dubber.core.audio.separate',
-        'dubber.core.asr.model_manager',
+        'dubber.core.asr.model_manager', 'dubber.core.model_setup', 'dubber.core.updater',
         'dubber.core.asr.fsmn_vad', 'dubber.core.asr._fsmn_e2e_vad',
         'kaldi_native_fbank', 'yaml',
         # HTTP / networking (groq client deps)
@@ -211,7 +215,7 @@ if IS_MAC:
         info_plist={
             'CFBundleName': 'Dubber Bee',          # menu bar / Dock name
             'CFBundleDisplayName': 'Dubber Bee',
-            'CFBundleShortVersionString': '0.3.0',
+            'CFBundleShortVersionString': APP_VERSION,
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '12.0',
         },
