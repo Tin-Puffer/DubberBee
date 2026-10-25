@@ -151,11 +151,12 @@ class TestExtractAudio:
 def test_failed_stereo_extraction_leaves_no_cached_file(tmp_path):
     """A half-written audio_stereo.wav must never be reused as a cache."""
     from dubber.core.audio.extract import AudioExtractor
-    fake_ffmpeg = tmp_path / "ffmpeg"
-    fake_ffmpeg.write_text("#!/bin/sh\nfor a; do last=$a; done\necho partial > \"$last\"\nexit 1\n")
-    fake_ffmpeg.chmod(0o755)
+
+    def failing_ffmpeg(cmd, **kw):          # writes part of its output, then fails
+        Path(cmd[-1]).write_text("partial")
+        return MagicMock(returncode=1, stderr="boom")
     out = tmp_path / "audio_stereo.wav"
-    with pytest.raises(RuntimeError):
-        AudioExtractor(ffmpeg=fake_ffmpeg, ffprobe=fake_ffmpeg).extract_audio_stereo(
+    with patch("subprocess.run", side_effect=failing_ffmpeg), pytest.raises(RuntimeError):
+        AudioExtractor(ffmpeg=Path("ffmpeg"), ffprobe=Path("ffprobe")).extract_audio_stereo(
             tmp_path / "v.mp4", out)
     assert not out.exists()
