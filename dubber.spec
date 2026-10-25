@@ -211,7 +211,7 @@ if IS_MAC:
         info_plist={
             'CFBundleName': 'Dubber Bee',          # menu bar / Dock name
             'CFBundleDisplayName': 'Dubber Bee',
-            'CFBundleShortVersionString': '0.2.0',
+            'CFBundleShortVersionString': '0.3.0',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '12.0',
         },
