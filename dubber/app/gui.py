@@ -166,6 +166,7 @@ class PipelineWorker(QObject):
         portrait: bool = False,
         brightness: int = 0,
         bg_brightness: "int | None" = None,
+        prepare: bool = False,
     ) -> None:
         super().__init__()
         import threading
@@ -175,6 +176,11 @@ class PipelineWorker(QObject):
         self._answer_ready = threading.Event()
         self._answer = None
         self._created: list = []   # files made outside the job dir (deleted on cancel)
+        # Prepare run of a queued video that needs the user (manual AI translation / review),
+        # while another video renders: separation, ASR, translation and its popups; the
+        # answers are cached for its own run. Holds the job dir lock throughout, so that run
+        # waits for it.
+        self.prepare         = prepare
         self.asr_on_vocals   = asr_on_vocals
         self.sep_overlap     = sep_overlap   # None = the pipeline's default
         self.logo            = logo          # run_m5's logo dict, None = no logo
@@ -293,6 +299,7 @@ class PipelineWorker(QObject):
         from dubber.core.utils.cancel import JobCancelled
         job_dir = None
         cancelled = False
+        held = None        # job dir lock a prepare run keeps until it ends
         check = self._cancel.check
         try:
             import shutil
@@ -323,11 +330,14 @@ class PipelineWorker(QObject):
                 self.step_started.emit("Separate")
                 while not lock.acquire(timeout=0.25):
                     check()
+            if self.prepare:
+                held = lock
             try:
                 job_dir = prepare_job_dir(
                     self.input_path, trim=(self.trim_start, self.trim_end) if trimming else None)
             finally:
-                lock.release()
+                if not self.prepare:
+                    lock.release()
 
             # ── Video trim ────────────────────────────────────────────────────
             input_path = self.input_path
@@ -358,6 +368,14 @@ class PipelineWorker(QObject):
                 pipeline.review_translation = lambda rows: self._review(
                     rows, job_dir, job_dir / "audio.wav")
             pipeline.manual_translation = self._manual
+
+            if self.prepare:
+                pipeline.mark_reviewed = True
+                pipeline.run_m2(input_path, translator=self.translator,
+                                asr_on_vocals=self.asr_on_vocals)
+                log.info("Prepared %s ahead of its turn", self.input_path.name)
+                self.finished.emit(job_dir)
+                return
 
             orig_m1 = pipeline.run_m1
             orig_m2 = pipeline.run_m2
@@ -462,12 +480,19 @@ class PipelineWorker(QObject):
         except Exception as exc:
             if self._cancel.cancelled:   # e.g. FFmpeg killed mid-render
                 cancelled = True
+            elif self.prepare:           # its own run retries and reports the error
+                log.warning("Prepare of %s failed: %s", self.input_path.name, exc)
+                self.error.emit(str(exc))
             else:
                 log.exception("Job failed: %s", self.input_path.name)
                 self._report_error(exc)
                 self.error.emit(str(exc))
         finally:
-            if cancelled:
+            if held is not None:
+                held.release()
+            if cancelled and self.prepare:   # what's cached stays for its own run
+                self.cancelled.emit()
+            elif cancelled:
                 # Cancel = stop and leave nothing behind (job cache included)
                 if job_dir is not None:
                     shutil.rmtree(job_dir, ignore_errors=True)
@@ -2250,6 +2275,11 @@ def _needs_stems(o: dict) -> bool:
     return o["music_on"] or o["cn_on"]
 
 
+def _needs_user(o: dict) -> bool:
+    """Will this video's run stop for the user (manual AI translation / review)?"""
+    return _translator_of(o) == "ai_manual" or not o.get("skip_review", True)
+
+
 def _prefetch_stems(path: Path, overlap: float) -> None:
     """Background thread: separate a queued video's music before its turn."""
     try:
@@ -2355,6 +2385,10 @@ class MainWindow(QWidget):
         self._ran = 0                 # videos finished in this run of the queue (notifications)
         self._prefetch = None         # thread separating the next queued video's music
         self._prefetched: set = set() # paths prefetched in this run of the queue
+        self._prep = None             # {job, worker, thread, opts}: a queued video asking ahead
+        self._past_translate = False  # running video translated: background work may start
+        self._asks: list = []         # popups waiting their turn: (job, worker, kind, payload)
+        self._asking = False          # a popup is open (one at a time)
         self._build_ui()
         # Elapsed / time-left labels tick once a second while a video runs
         self._tick_timer = QTimer(self)
@@ -2804,6 +2838,8 @@ class MainWindow(QWidget):
         # Block list signals: currentRowChanged mid-removal would commit the panels
         # into a job whose index has shifted.
         self._list.blockSignals(True)
+        if self._prep is not None and self._prep["job"] in [self._jobs[i] for i in rows]:
+            self._cancel_prep()
         for i in sorted(rows, reverse=True):
             del self._jobs[i]
             self._list.takeItem(i)
@@ -2875,9 +2911,12 @@ class MainWindow(QWidget):
             return
         count = lambda st: sum(j.status == st for j in self._jobs)
         waiting = sum(bool(j.waiting) for j in self._jobs)
+        run_waiting = sum(bool(j.waiting) and j.status == _Job.RUNNING for j in self._jobs)
+        queued_waiting = waiting - run_waiting
         parts = [f"{n} video"]
-        for num, label in ((count(_Job.DONE), "xong"), (count(_Job.RUNNING) - waiting, "đang chạy"),
-                           (waiting, "chờ bạn"), (count(_Job.PENDING), "chờ chạy"),
+        for num, label in ((count(_Job.DONE), "xong"),
+                           (count(_Job.RUNNING) - run_waiting, "đang chạy"),
+                           (waiting, "chờ bạn"), (count(_Job.PENDING) - queued_waiting, "chờ chạy"),
                            (count(_Job.ERROR), "lỗi"), (count(_Job.CANCELLED), "đã hủy")):
             if num:
                 parts.append(f"{num} {label}")
@@ -3091,30 +3130,62 @@ class MainWindow(QWidget):
             return
         self._cancelling = True
         self._stop_requested = True   # don't roll on to the next video
+        self._cancel_prep()
         self._worker.cancel()
         self._set_status("Đang hủy… (dừng ở điểm an toàn gần nhất của bước hiện tại)", _AMBER)
         self._refresh_buttons()
 
     def _on_ask(self, kind: str, payload):
         """The running video waits on the user (translation review / Groq rate limit)."""
+        job = self._jobs[self._running] if self._running >= 0 else None
+        self._asks.insert(0, (job, self._worker, kind, payload))   # before queued videos
+        self._pump_asks()
+
+    def _on_prep_ask(self, kind: str, payload):
+        """A queued video, prepared ahead, needs the user (its own popup)."""
+        if self._prep is not None:
+            self._asks.append((self._prep["job"], self._prep["worker"], kind, payload))
+            self._pump_asks()
+
+    def _pump_asks(self) -> None:
+        """Show waiting popups one by one (another may arrive while one is open)."""
+        if self._asking:
+            return
+        self._asking = True
+        try:
+            while self._asks:
+                self._ask_user(*self._asks.pop(0))
+        finally:
+            self._asking = False
+
+    def _ask_user(self, job, worker, kind: str, payload) -> None:
         from dubber.app.wait_dialogs import ask_rate_limit
         from dubber.app import notify
-        worker = self._worker
-        job = self._jobs[self._running] if self._running >= 0 else None
-        if job is not None:
-            job.waiting = kind
-            self._update_item(self._running)
-            notify.notify(self, f"{APP_NAME} — cần bạn", {
-                "review": f"{job.path.name}: dịch xong, mời bạn duyệt bản dịch",
-                "manual": f"{job.path.name}: đã nhận dạng xong, mời bạn dịch với AI",
-                "rate_limit": f"{job.path.name}: Groq đang giới hạn",
-            }.get(kind, job.path.name))
-        if self._progress is not None:
+        main = (worker is getattr(self, "_worker", None) and job is not None
+                and self._running >= 0 and self._jobs[self._running] is job)
+        prep = self._prep is not None and worker is self._prep["worker"]
+        if not main and not prep:
+            worker.cancel()   # its video was cancelled / stopped meanwhile
+            return
+        if prep and not self._prep_still_wanted():
+            self._cancel_prep()
+            return
+        if main and kind in ("review", "manual"):
+            self._past_translate = True   # no GPU work left: the next video can prepare
+        job.waiting = kind
+        self._update_job(job)
+        notify.notify(self, f"{APP_NAME} — cần bạn", {
+            "review": f"{job.path.name}: dịch xong, mời bạn duyệt bản dịch",
+            "manual": f"{job.path.name}: đã nhận dạng xong, mời bạn dịch với AI",
+            "rate_limit": f"{job.path.name}: Groq đang giới hạn",
+        }.get(kind, job.path.name))
+        if main and self._progress is not None:
             self._progress.pause()
         if kind == "rate_limit":
             answer = ask_rate_limit(payload, parent=self)
         elif kind == "manual":
-            self._prefetch_next()   # no GPU work while the user asks the chatbot
+            if main:
+                self._prefetch_next()   # no GPU work while the user asks the chatbot
             from dubber.app.manual_dialog import ManualTranslateDialog
             self._set_status(f"{payload['video']}: chờ bạn dán bản dịch từ AI…", _AMBER)
             dlg = ManualTranslateDialog(payload["video"], payload["rows"], payload["duration"],
@@ -3122,10 +3193,11 @@ class MainWindow(QWidget):
             answer = dlg.segments if dlg.exec() == QDialog.Accepted else None
             dlg.deleteLater()
         elif kind == "review":
-            self._prefetch_next()   # translated; the user may take minutes — use them
+            if main:
+                self._prefetch_next()   # translated; the user may take minutes — use them
             from dubber.app.review_dialog import ReviewDialog
             self._set_status(f"{payload['video']}: chờ bạn duyệt bản dịch…", _AMBER)
-            info = job.info if job is not None else None
+            info = job.info
             duration = (info.duration if info and info.duration
                         and not job.opts.get("trim_on") else None)
             dlg = ReviewDialog(payload["video"], payload["rows"], audio=payload["audio"],
@@ -3135,17 +3207,32 @@ class MainWindow(QWidget):
             dlg.deleteLater()   # a long video's table is big: don't keep it under the window
         else:
             answer = None
-        if job is not None:
-            job.waiting = ""
-            if self._running >= 0:
-                self._update_item(self._running)
-        if self._progress is not None:
+        job.waiting = ""
+        self._update_job(job)
+        if main and self._progress is not None:
             self._progress.resume()
         if answer is None:
-            self._cancel_current()   # also releases the worker
+            if main or (job.status == _Job.RUNNING and self._running >= 0
+                        and self._jobs[self._running] is job):
+                self._cancel_current()   # also releases the worker
+            else:                        # a queued video: only that one is cancelled
+                self._cancel_prep()
+                if job in self._jobs and job.status == _Job.PENDING:
+                    job.status, job.error = _Job.CANCELLED, ""
+                    self._update_job(job)
+                self._set_status(f"⊘  Đã hủy {job.path.name}", _AMBER)
+                self._refresh_buttons()
         else:
-            self._set_status("Đang tiếp tục…", _TXT_DIM)
+            if main:
+                self._set_status("Đang tiếp tục…", _TXT_DIM)
+            else:
+                self._set_status(f"{job.path.name}: đã lưu — dùng khi tới lượt video này",
+                                 _TXT_DIM)
             worker.answer(answer)
+
+    def _update_job(self, job: "_Job") -> None:
+        if job in self._jobs:
+            self._update_item(self._jobs.index(job))
 
     def _on_cancelled(self):
         job = self._jobs[self._running]
@@ -3157,6 +3244,7 @@ class MainWindow(QWidget):
 
     def _request_stop(self):
         self._stop_requested = True
+        self._cancel_prep()   # its popups would ask for a video that won't run
         self._set_status("Sẽ dừng sau khi video hiện tại xong…", _AMBER)
         self._refresh_buttons()
 
@@ -3192,6 +3280,7 @@ class MainWindow(QWidget):
         self._commit_selected()
         job = self._jobs[nxt]
         self._running = nxt
+        self._past_translate = False
         job.status = _Job.RUNNING
         self._update_item(nxt)
         if self._sel == nxt:
@@ -3206,9 +3295,28 @@ class MainWindow(QWidget):
         self._tick_timer.start()
         self._refresh_buttons()
 
-        o, e = job.opts, job.export
         self._thread = QThread()
-        self._worker = PipelineWorker(
+        self._worker = self._make_worker(job)
+        self._worker.moveToThread(self._thread)
+        self._thread.started      .connect(self._worker.run)
+        self._worker.step_started .connect(self._on_started)
+        self._worker.step_progress.connect(self._on_progress)
+        self._worker.step_done    .connect(self._on_done)
+        self._worker.finished     .connect(self._on_finished)
+        self._worker.error        .connect(self._on_error)
+        self._worker.cancelled    .connect(self._on_cancelled)
+        self._worker.error_report .connect(self._on_error_report)
+        self._worker.ask          .connect(self._on_ask)
+        self._worker.finished     .connect(self._thread.quit)
+        self._worker.error        .connect(self._thread.quit)
+        self._worker.cancelled    .connect(self._thread.quit)
+        self._thread.finished     .connect(self._thread.deleteLater)
+        self._thread.finished     .connect(self._run_next)
+        self._thread.start()
+
+    def _make_worker(self, job: "_Job", **extra) -> "PipelineWorker":
+        o, e = job.opts, job.export
+        return PipelineWorker(
             job.path,
             vi_volume=o["vi"] / 100.0,
             dub_voice=o.get("vi_on", True),
@@ -3233,46 +3341,77 @@ class MainWindow(QWidget):
             audio_bitrate=e["audio_br"],
             output_dir=self._out.output_dir(),
             **_layout_kwargs(o),
+            **extra,
         )
-        self._worker.moveToThread(self._thread)
-        self._thread.started      .connect(self._worker.run)
-        self._worker.step_started .connect(self._on_started)
-        self._worker.step_progress.connect(self._on_progress)
-        self._worker.step_done    .connect(self._on_done)
-        self._worker.finished     .connect(self._on_finished)
-        self._worker.error        .connect(self._on_error)
-        self._worker.cancelled    .connect(self._on_cancelled)
-        self._worker.error_report .connect(self._on_error_report)
-        self._worker.ask          .connect(self._on_ask)
-        self._worker.finished     .connect(self._thread.quit)
-        self._worker.error        .connect(self._thread.quit)
-        self._worker.cancelled    .connect(self._thread.quit)
-        self._thread.finished     .connect(self._thread.deleteLater)
-        self._thread.finished     .connect(self._run_next)
-        self._thread.start()
 
     def _prefetch_next(self) -> None:
         """Once the running video is translated (review wait / TTS / render: CPU and FFmpeg
-        only), separate the next queued video's music in the background — its run then
-        reuses the stems (separation is ~half a run). Not earlier: the GPU (MPS) is
-        shared with local translation and only one can use it (utils/gpu.py)."""
-        if self._prefetch is not None and self._prefetch.is_alive():
+        only), work ahead on the queue in the background — not earlier: the GPU (MPS) is
+        shared with local translation and only one can use it (utils/gpu.py):
+        - a queued video that needs the user (manual AI translation / review) is prepared
+          up to its popups, which then show right away (one at a time) instead of after
+          the running video's render; its own run reuses the answers;
+        - otherwise the next video's music is separated (~half a run) for its run to reuse.
+        One background job at a time."""
+        if (self._prefetch is not None and self._prefetch.is_alive()) or self._prep is not None:
             return
         cur = self._jobs[self._running] if 0 <= self._running < len(self._jobs) else None
-        nxt = next((j for j in self._jobs if j.status == _Job.PENDING), None)
-        if (nxt is None or cur is None or nxt.path in self._prefetched
-                or nxt.opts.get("trim_on") or nxt.path.resolve() == cur.path.resolve()
-                or not _needs_stems(nxt.opts)):
+        if cur is None:
             return
-        import threading
-        self._prefetched.add(nxt.path)
-        self._prefetch = threading.Thread(target=_prefetch_stems,
-                                          args=(nxt.path, _sep_overlap_of(nxt.opts)),
-                                          name="stems-prefetch", daemon=True)
-        self._prefetch.start()
+        pending = [j for j in self._jobs if j.status == _Job.PENDING]
+        for i, nxt in enumerate(pending):
+            if nxt.path in self._prefetched or nxt.path.resolve() == cur.path.resolve():
+                continue
+            if _needs_user(nxt.opts):
+                self._start_prep(nxt)
+                return
+            if i == 0 and not nxt.opts.get("trim_on") and _needs_stems(nxt.opts):
+                import threading
+                self._prefetched.add(nxt.path)
+                self._prefetch = threading.Thread(target=_prefetch_stems,
+                                                  args=(nxt.path, _sep_overlap_of(nxt.opts)),
+                                                  name="stems-prefetch", daemon=True)
+                self._prefetch.start()
+                return
+
+    def _start_prep(self, job: "_Job") -> None:
+        import copy
+        self._prefetched.add(job.path)
+        thread = QThread()
+        worker = self._make_worker(job, prepare=True)
+        worker.moveToThread(thread)
+        self._prep = {"job": job, "worker": worker, "thread": thread, "cancelled": False,
+                      "opts": copy.deepcopy((job.opts, job.export))}
+        thread.started.connect(worker.run)
+        worker.ask.connect(self._on_prep_ask)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_prep_done)
+        log.info("Preparing %s ahead of its turn (it needs you)", job.path.name)
+        thread.start()
+
+    def _prep_still_wanted(self) -> bool:
+        """The prepared video is still queued, with the settings it was prepared with."""
+        p = self._prep
+        return (p is not None and not p["cancelled"] and p["job"] in self._jobs
+                and p["job"].status in (_Job.PENDING, _Job.RUNNING)
+                and (p["job"].opts, p["job"].export) == p["opts"])
+
+    def _cancel_prep(self) -> None:
+        if self._prep is not None:
+            self._prep["cancelled"] = True
+            self._prep["worker"].cancel()
+
+    def _on_prep_done(self) -> None:
+        self._prep = None
+        if self._past_translate:
+            self._prefetch_next()   # the next one that needs the user
 
     def _on_started(self, name: str):
         if name in ("TTS", "Render"):   # translated: no GPU work left, the next can start
+            self._past_translate = True
             self._prefetch_next()
         if self._progress is not None:
             self._progress.started(name)
@@ -3300,6 +3439,8 @@ class MainWindow(QWidget):
     def _tick(self) -> None:
         """Refresh the running card, the step times and the progress title."""
         from dubber.app.progress import fmt_clock, fmt_left
+        if self._past_translate:
+            self._prefetch_next()   # a background job ended: start the next one
         p = self._progress
         if p is None or not (0 <= self._running < len(self._jobs)):
             return
@@ -3431,6 +3572,9 @@ class MainWindow(QWidget):
 
     def closeEvent(self, event):
         self._closing = True                # don't start reading the next video
+        if self._prep is not None:          # a queued video preparing ahead
+            self._cancel_prep()
+            self._prep["thread"].wait(3000)
         try:
             self._save_state()
         except Exception:   # never block closing the app

@@ -31,6 +31,9 @@ class Pipeline:
         # manual_translation(rows, duration) -> [{start, end, vi_text}] from a chatbot
         # (translator "ai_manual"); None = not available (CLI)
         self.manual_translation = None
+        # True for a queue "prepare" run (the next video asks its popups while the previous
+        # one renders): a review done here is marked, so the video's own run skips it once
+        self.mark_reviewed = False
         # Music separation quality (MDX-Net chunk overlap, separate.OVERLAPS)
         from dubber.core.audio.separate import DEFAULT_OVERLAP
         self.sep_overlap = DEFAULT_OVERLAP
@@ -619,9 +622,23 @@ class Pipeline:
 
     def _review(self, translate_json: Path, stored: Path, sig: dict) -> None:
         """Let the user check / edit the translation; edits also replace the stored copy,
-        so a rerun with the same translator starts from the reviewed text."""
+        so a rerun with the same translator starts from the reviewed text.
+
+        Reviewed ahead by a prepare run (mark_reviewed) → the next run skips it once."""
+        mark = stored.with_name(stored.stem + ".reviewed")
+        if not self.mark_reviewed and mark.exists():
+            ahead = mark.read_text(encoding="utf-8").strip()
+            mark.unlink()   # one run only: a later rerun asks again
+            if stored.exists() and ahead == file_digest(stored):
+                log.info("Review: đã duyệt trước khi tới lượt — dùng luôn")
+                return
         if self.review_translation is None:
             return
+        self._review_rows(translate_json, stored, sig)
+        if self.mark_reviewed and stored.exists():
+            mark.write_text(file_digest(stored), encoding="utf-8")
+
+    def _review_rows(self, translate_json: Path, stored: Path, sig: dict) -> None:
         import json
         import shutil
 

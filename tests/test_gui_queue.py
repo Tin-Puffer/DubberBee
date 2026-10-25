@@ -30,6 +30,8 @@ class _FakeWorker(QObject):
     ask = Signal(str, object)
     runs: list = []
     answers: list = []
+    answered_ahead: set = set()
+    release = None   # threading.Event a "render" video waits on
 
     def __init__(self, input_path, **kw):
         super().__init__()
@@ -46,7 +48,9 @@ class _FakeWorker(QObject):
 
     def run(self):
         _FakeWorker.runs.append((self.input_path.name, self.kw))
-        if self.input_path.stem in ("ratelimit", "review", "manual"):   # waits on the user
+        prepare = self.kw.get("prepare", False)
+        if self.input_path.stem in ("ratelimit", "review", "manual") and not (
+                not prepare and self.input_path.name in _FakeWorker.answered_ahead):
             kind = {"ratelimit": "rate_limit", "review": "review",
                     "manual": "manual"}[self.input_path.stem]
             self.ask.emit(kind, {"video": self.input_path.name, "script": Path("x_zh.txt"),
@@ -61,6 +65,14 @@ class _FakeWorker(QObject):
             if self._cancel:
                 self.cancelled.emit()
                 return
+            if prepare:
+                _FakeWorker.answered_ahead.add(self.input_path.name)
+        if prepare:                          # asked ahead; its own run comes later
+            self.finished.emit(self.input_path)
+            return
+        if "render" in self.input_path.name:  # translated, then renders until released
+            self.step_started.emit("TTS")
+            _FakeWorker.release.wait(10)
         if "slow" in self.input_path.name:   # runs until cancelled
             end = time.time() + 10
             while not self._cancel and time.time() < end:
@@ -82,7 +94,10 @@ def win(tmp_path, monkeypatch):
     QApplication.instance() or QApplication([])
     monkeypatch.setattr(settings, "settings_path", lambda: tmp_path / "settings.json")
     monkeypatch.setattr(gui, "PipelineWorker", _FakeWorker)
-    _FakeWorker.runs = []
+    monkeypatch.setattr(gui, "_prefetch_stems", lambda path, overlap: None)   # no real MDX-Net
+    import threading
+    _FakeWorker.runs, _FakeWorker.answered_ahead = [], set()
+    _FakeWorker.release = threading.Event()
     w = gui.MainWindow()
     yield w
     w.close()
@@ -1124,3 +1139,225 @@ def test_ai_manual_translator_is_offered_and_kept(win, tmp_path):
     win._start()
     _wait_idle(win)
     assert _FakeWorker.runs[-1][1]["translator"] == "ai_manual"
+
+
+# ── Each queued video asks its own popup ahead of its turn ────────────────────
+
+def _wait_for(cond, timeout=10.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        QApplication.processEvents()
+        if cond():
+            return
+        time.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+def _manual_dialog(monkeypatch, log, segs, accept=True, during=None):
+    import dubber.app.manual_dialog as md
+
+    class Dialog:
+        def __init__(self, video, rows, duration, parent=None):
+            self.video, self.segments = video, segs
+        def exec(self):
+            log.append(("open", self.video))
+            if during:
+                during()
+            log.append(("close", self.video))
+            return gui.QDialog.Accepted if accept else gui.QDialog.Rejected
+        def deleteLater(self): pass
+    monkeypatch.setattr(md, "ManualTranslateDialog", Dialog)
+
+
+def test_needs_user_follows_translator_and_review():
+    assert gui._needs_user({"translator": "ai_manual", "skip_review": True})
+    assert gui._needs_user({"translator": "groq", "skip_review": False})
+    assert not gui._needs_user({"translator": "groq", "skip_review": True})
+    assert not gui._needs_user({"translator": "manual"})        # old config → auto
+
+
+def test_queued_video_asks_its_popup_while_the_running_one_renders(win, tmp_path, monkeypatch):
+    log, segs = [], [{"start": 0.0, "end": 2.0, "vi_text": "Một câu."}]
+    _manual_dialog(monkeypatch, log, segs,
+                   during=lambda: log.append(("running", win._jobs[0].status)))
+    _FakeWorker.answers = []
+    a, m = _videos(tmp_path, "render.mp4", "manual.mp4")
+    win._add_files([a, m])
+    win._jobs[1].opts["translator"] = "ai_manual"
+    win._start()
+    _wait_for(lambda: _FakeWorker.answers == [segs] and win._prep is None)
+    assert log == [("open", "manual.mp4"), ("running", "running"), ("close", "manual.mp4")]
+    assert win._jobs[1].status == "pending" and win._jobs[0].status == "running"
+    _FakeWorker.release.set()                     # A finishes → M runs with the answer
+    _wait_idle(win)
+    names = [(n, k.get("prepare", False)) for n, k in _FakeWorker.runs]
+    assert names == [("render.mp4", False), ("manual.mp4", True), ("manual.mp4", False)]
+    assert [j.status for j in win._jobs] == ["done", "done"]
+    assert len([e for e in log if e[0] == "open"]) == 1        # asked once, not again
+
+
+def test_popups_never_overlap(win, tmp_path, monkeypatch):
+    """The running video's question arrives while a queued video's popup is open: it
+    waits until that popup is closed."""
+    import dubber.app.wait_dialogs as wd
+    log, segs = [], [{"start": 0.0, "end": 2.0, "vi_text": "Một câu."}]
+
+    def rate_limit(info, parent=None):
+        log.append(("rate_limit", info["video"]))
+        return "continue"
+    monkeypatch.setattr(wd, "ask_rate_limit", rate_limit)
+    _manual_dialog(monkeypatch, log, segs, during=lambda: (
+        win._on_ask("rate_limit", {"video": "render.mp4"}), QApplication.processEvents()))
+    _FakeWorker.answers = []
+    a, m = _videos(tmp_path, "render.mp4", "manual.mp4")
+    win._add_files([a, m])
+    win._jobs[1].opts["translator"] = "ai_manual"
+    win._start()
+    _wait_for(lambda: len(_FakeWorker.answers) == 2 and win._prep is None)
+    assert log == [("open", "manual.mp4"), ("close", "manual.mp4"),
+                   ("rate_limit", "render.mp4")]
+    assert _FakeWorker.answers == [segs, "continue"]
+    _FakeWorker.release.set()
+    _wait_idle(win)
+
+
+def test_cancelling_a_queued_videos_popup_cancels_only_that_video(win, tmp_path, monkeypatch):
+    log = []
+    _manual_dialog(monkeypatch, log, None, accept=False)
+    a, m, b = _videos(tmp_path, "render.mp4", "manual.mp4", "b.mp4")
+    win._add_files([a, m, b])
+    win._jobs[1].opts["translator"] = "ai_manual"
+    win._start()
+    _wait_for(lambda: win._jobs[1].status == "cancelled" and win._prep is None)
+    assert win._jobs[0].status == "running"            # the running video goes on
+    _FakeWorker.release.set()
+    _wait_idle(win)
+    assert [j.status for j in win._jobs] == ["done", "cancelled", "done"]
+    assert ("manual.mp4", False) not in [(n, k.get("prepare", False))
+                                        for n, k in _FakeWorker.runs]
+
+
+def test_review_videos_are_prepared_one_after_another(win, tmp_path, monkeypatch):
+    import dubber.app.review_dialog as rd
+    opened = []
+
+    class Dialog:
+        def __init__(self, video, rows, **k): opened.append(video); self.result = ["ok"]
+        def exec(self): return gui.QDialog.Accepted
+        def deleteLater(self): pass
+    monkeypatch.setattr(rd, "ReviewDialog", Dialog)
+    a, r1 = _videos(tmp_path, "render.mp4", "review.mp4")
+    (tmp_path / "other").mkdir()
+    r2 = tmp_path / "other" / "review.mp4"; r2.touch()
+    win._add_files([a, r1, r2])
+    for j in win._jobs[1:]:
+        j.opts["skip_review"] = False
+    win._start()
+    _wait_for(lambda: len(opened) == 2 and win._prep is None)   # both before A finishes
+    assert win._jobs[0].status == "running"
+    _FakeWorker.release.set()
+    _wait_idle(win)
+    assert len(opened) == 2 and all(j.status == "done" for j in win._jobs)
+
+
+def _fake_prep(win, job):
+    import copy
+    worker = _FakeWorker(job.path)
+    win._prep = {"job": job, "worker": worker, "thread": None, "cancelled": False,
+                 "opts": copy.deepcopy((job.opts, job.export))}
+    return worker
+
+
+_MANUAL_ASK = {"video": "manual.mp4", "rows": [], "duration": 10.0}
+
+
+def test_stop_cancels_the_prepare_and_its_waiting_popup(win, tmp_path, monkeypatch):
+    log = []
+    _manual_dialog(monkeypatch, log, [{"start": 0.0, "end": 1.0, "vi_text": "x"}])
+    (m,) = _videos(tmp_path, "manual.mp4")
+    win._add_files([m])
+    worker = _fake_prep(win, win._jobs[0])
+    win._request_stop()                  # "stop after the current video"
+    assert worker._cancel
+    win._on_prep_ask("manual", _MANUAL_ASK)
+    assert log == [] and win._jobs[0].status == "pending"
+    win._prep = None
+
+
+def test_popup_of_a_video_whose_settings_changed_is_dropped(win, tmp_path, monkeypatch):
+    log = []
+    _manual_dialog(monkeypatch, log, [{"start": 0.0, "end": 1.0, "vi_text": "x"}])
+    (m,) = _videos(tmp_path, "manual.mp4")
+    win._add_files([m])
+    worker = _fake_prep(win, win._jobs[0])
+    win._jobs[0].opts["translator"] = "groq"          # edited while it was preparing
+    win._on_prep_ask("manual", _MANUAL_ASK)
+    assert log == [] and worker._cancel and win._jobs[0].status == "pending"
+    win._prep = None
+
+
+def test_worker_prepare_stops_before_tts_and_holds_the_job_lock(tmp_path, monkeypatch):
+    import threading
+    import dubber.core.pipeline as pl
+    import dubber.core.utils.paths as paths
+    from dubber.core.audio.separate import separation_lock
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(paths, "_app_data_dir", lambda: tmp_path / "appdata")
+    src = tmp_path / "clip.mp4"; src.write_bytes(b"src")
+    seen = {}
+
+    class FakePipeline:
+        def __init__(self, ffmpeg, ffprobe, job_dir):
+            self.job_dir, self.mark_reviewed = job_dir, False
+            self.run_m1 = self.run_m3 = lambda *a, **k: None
+
+        def run_m2(self, input_path, **k):
+            seen["m2"], seen["mark"] = k, self.mark_reviewed
+            got = []
+            t = threading.Thread(target=lambda: got.append(
+                separation_lock(self.job_dir).acquire(blocking=False)))
+            t.start(); t.join()
+            seen["lock_free"] = got[0]
+
+        def run_m5(self, *a, **k):
+            raise AssertionError("a prepare run never renders")
+
+    monkeypatch.setattr(pl, "Pipeline", FakePipeline)
+    w = gui.PipelineWorker(src, output_dir=tmp_path / "out", translator="ai_manual",
+                           prepare=True)
+    res = []
+    w.finished.connect(res.append)
+    w.error.connect(lambda m: res.append(("error", m)))
+    w.run()
+    assert res == [paths.job_dir_for(src)] and res[0].is_dir()
+    assert seen["m2"]["translator"] == "ai_manual" and seen["mark"] is True
+    assert seen["lock_free"] is False                 # its own run waits for it
+    lock = separation_lock(res[0])
+    assert lock.acquire(blocking=False); lock.release()   # released at the end
+    assert not (tmp_path / "out").exists()
+
+
+def test_worker_prepare_cancel_keeps_the_cache(tmp_path, monkeypatch):
+    import dubber.core.pipeline as pl
+    import dubber.core.utils.paths as paths
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(paths, "_app_data_dir", lambda: tmp_path / "appdata")
+    src = tmp_path / "clip.mp4"; src.write_bytes(b"src")
+
+    class FakePipeline:
+        def __init__(self, ffmpeg, ffprobe, job_dir):
+            self.job_dir = job_dir
+            self.run_m1 = self.run_m3 = lambda *a, **k: None
+
+        def run_m2(self, input_path, **k):
+            (self.job_dir / "asr.json").write_text("[]")
+            from dubber.core.utils.cancel import JobCancelled
+            raise JobCancelled("Đã hủy")
+
+    monkeypatch.setattr(pl, "Pipeline", FakePipeline)
+    w = gui.PipelineWorker(src, translator="ai_manual", prepare=True)
+    res = []
+    w.cancelled.connect(lambda: res.append("cancelled"))
+    w.run()
+    assert res == ["cancelled"]
+    assert (paths.job_dir_for(src) / "asr.json").exists()

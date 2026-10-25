@@ -68,7 +68,9 @@ dubber/
 ├── __main__.py              # entry point
 ├── assets/                  # fonts/ (phụ đề), logo/ (logo.svg → logo_*.png, icon.icns, icon.ico)
 ├── app/
-│   ├── gui.py               # PySide6 GUI, PipelineWorker thread
+│   ├── gui.py               # PySide6 GUI, PipelineWorker thread; video chạy xong phần dịch →
+│   │                        # video sau cần người dùng (dịch AI thủ công / duyệt) được chuẩn bị
+│   │                        # nền (prepare=True) tới popup của nó; popup hiện lần lượt từng cái
 │   ├── tasks.py             # TaskRunner + BusyBar: việc chậm chạy nền, có thanh loading
 │   ├── review_dialog.py     # duyệt/sửa bản dịch trước TTS, copy cho AI / dán kết quả AI
 │   ├── queue_card.py        # thẻ video trong hàng đợi (trạng thái + nút theo trạng thái)
@@ -205,6 +207,9 @@ Mac: app ký ad-hoc, chưa notarize → máy khác mở lần đầu bằng chu�
 - [x] Prompt AI (sửa bản dịch, TikTok) sửa được trong ⚙ Cài đặt, lưu `settings.json`, có ↺ Mặc định
 - [x] Bỏ dịch thủ công (cấu hình cũ `translator: manual` chạy như `auto`); bỏ mọi tự dọn cache
       (chỉ nút "Dọn cache"); lăn chuột không đổi giá trị ô chọn / ô số / thanh trượt
+- [x] Mỗi video một popup riêng: khi video đang chạy đã dịch xong, video chờ chạy cần dán bản
+      dịch AI / duyệt được tách nhạc + nhận dạng (+ dịch) nền và hỏi ngay (từng popup một);
+      câu trả lời lưu cache, tới lượt chạy không hỏi lại (`translations/<bộ dịch>.reviewed`)
 - [x] Tên hiển thị **Dubber Bee** + logo ong (`dubber/assets/logo/`); thư mục dữ liệu, service
       keyring `Dubber`, tên file build `Dubber.app`/`Dubber.exe` giữ nguyên
 

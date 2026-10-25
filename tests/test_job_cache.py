@@ -40,9 +40,10 @@ class _Env:
         tr.translate.side_effect = translate
         return tr
 
-    def run(self, translator: str = "auto", vad: str = "fsmn", review=None):
+    def run(self, translator: str = "auto", vad: str = "fsmn", review=None, prepare=False):
         pipe = Pipeline(ffmpeg=Path("ffmpeg"), ffprobe=Path("ffprobe"), job_dir=self.job_dir)
         pipe.review_translation = review
+        pipe.mark_reviewed = prepare
         pipe._extractor = MagicMock()
         engine = MagicMock()
         engine.transcribe.side_effect = self._transcribe

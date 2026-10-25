@@ -94,6 +94,36 @@ def test_review_edits_are_saved_and_reused(env):
     assert seen == ["Xin chào."]                      # review starts from the edited text
 
 
+def test_review_done_ahead_is_skipped_once(env):
+    """A queue prepare run reviews before the video's turn: its own run skips the review
+    (same text), a later rerun asks again."""
+    seen = []
+
+    def review(tag):
+        def hook(rows):
+            seen.append(tag)
+            return ["đã duyệt trước", rows[1]["vi_text"]]
+        return hook
+    env.run("groq", review=review("ahead"), prepare=True)
+    mark = env.job_dir / "translations" / "groq.reviewed"
+    assert seen == ["ahead"] and mark.exists()
+    _, tj = env.run("groq", review=review("own run"))
+    assert seen == ["ahead"] and not mark.exists()     # not asked twice
+    assert json.loads(tj.read_text(encoding="utf-8"))[0]["vi_text"] == "Đã duyệt trước."
+    env.run("groq", review=review("rerun"))
+    assert seen == ["ahead", "rerun"]
+
+
+def test_review_ahead_mark_ignored_when_the_text_changed(env):
+    env.run("groq", review=lambda rows: [r["vi_text"] for r in rows], prepare=True)
+    stored = env.job_dir / "translations" / "groq.json"
+    stored.write_text(stored.read_text(encoding="utf-8").replace("Groq-0.", "Khác."),
+                      encoding="utf-8")
+    seen = []
+    env.run("groq", review=lambda rows: seen.append(1) or [r["vi_text"] for r in rows])
+    assert seen == [1]
+
+
 def test_no_review_hook_runs_straight_through(env):
     _, tj = env.run("groq")
     assert json.loads(tj.read_text(encoding="utf-8"))[0]["vi_text"] == "Groq-0."
