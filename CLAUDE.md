@@ -80,6 +80,8 @@ dubber/
 │   ├── prompt_dialog.py     # soạn prompt AI (sửa bản dịch / TikTok): lưu, khôi phục mặc định
 │   ├── preview.py           # khung hình + phụ đề mẫu (gần đúng) trong "Thông tin video gốc"
 │   ├── notify.py            # thông báo hệ thống + Dock khi xong / lỗi / cần người dùng
+│   ├── mix_preview.py       # 🎧 Nghe thử (tab Âm thanh): phát 20s đã trộn theo thanh âm lượng,
+│   │                        # kéo thanh nghe ngay (1 luồng QAudioSink), vạch đo + cảnh báo nền lấn giọng
 │   ├── manual_dialog.py     # dịch thủ công: tiếng Trung + giờ, sao chép cho AI, dán + kiểm tra kết quả
 │   └── voice_dialog.py      # hộp thoại clone giọng VieNeu
 └── core/
@@ -112,6 +114,8 @@ dubber/
     │   │                    # mọi câu về cùng độ to −14 dBFS (piper/VieNeu lệch ~7 dB) + limiter mềm,
     │   │                    # tăng tốc đều ≤1,15× (1 câu ≤1,3×), trễ ≤1,5s; câu quá dài → Groq rút gọn
     │   ├── mixer.py         # build_dub_wav(): ghép dub.wav đúng sample rate của giọng (không resample)
+    │   ├── preview_mix.py   # Nghe thử: cắt 20s các track (cache job / tách riêng đoạn / câu mẫu TTS),
+    │   │                    # trộn đúng quy tắc run_m5 (nhạc = tiếng Trung cùng mức → âm gốc…)
     │   ├── music.py         # "Nhạc của bạn": file chép vào user-data/music, lặp + nhỏ dần cuối khi render
     │   └── separate.py      # tách nhạc nền (audio-separator, hoặc FFmpeg fallback); chất lượng = overlap
     │                        # theo từng video (0,1/0,25/0,5 mặc định/0,75), đổi mức chỉ tách lại, giữ ASR/dịch;

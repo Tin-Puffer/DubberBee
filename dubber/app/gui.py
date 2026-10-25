@@ -976,6 +976,16 @@ class OptionsPanel(QWidget):
         for sig in (self._chk_bgm.toggled, self._sld_bgm.valueChanged):
             sig.connect(self._remember_music)
 
+        from dubber.app.mix_preview import MixPreview
+        self.preview_source = None   # (video path, duration) of the selected video
+        self.mix_preview = MixPreview(self._preview_volumes, self._preview_context, self)
+        form.addRow("Nghe thử", self.mix_preview)
+        for sig in (self._chk_vi.toggled, self._sld_vi.valueChanged,
+                    self._chk_music.toggled, self._sld_music.valueChanged,
+                    self._chk_cn_voice.toggled, self._sld_cn_voice.valueChanged,
+                    self._chk_bgm.toggled, self._sld_bgm.valueChanged):
+            sig.connect(self.mix_preview.refresh_volumes)
+
         self._hint = _hint_label(self)
         form.addRow("", self._hint)
         form.addRow("", _hint_label(self, "100% = giữ nguyên độ to của âm thanh gốc"))
@@ -1470,6 +1480,30 @@ class OptionsPanel(QWidget):
     def set_sub_font(self, family: str, size: int) -> None:
         _select_data(self._combo_font, family)
         self._spin_size.setValue(size)
+
+    def _preview_volumes(self) -> dict:
+        """The Audio tab as the mix preview takes it (volumes 0–1)."""
+        bgm_file = bool(self._bgm_path) and Path(self._bgm_path).exists()
+        return {"vi_on": self._chk_vi.isChecked(), "vi": self._sld_vi.value() / 100,
+                "music_on": self._chk_music.isChecked(), "music": self._sld_music.value() / 100,
+                "cn_on": self._chk_cn_voice.isChecked(), "cn": self._sld_cn_voice.value() / 100,
+                "bgm_on": self._chk_bgm.isChecked() and bgm_file,
+                "bgm": self._sld_bgm.value() / 100}
+
+    def _preview_context(self) -> "dict | None":
+        """The selected video + the settings that change what the preview plays."""
+        if not self.preview_source:
+            return None
+        path, duration = self.preview_source
+        o = self.get_config()
+        trim = ((o["trim_start"], o["trim_end"] or None) if o["trim_on"] else (0.0, None))
+        return {"path": path, "duration": duration, "trim": trim,
+                "engine": o["tts_engine"], "voice": o["voice"],
+                "overlap": _sep_overlap_of(o), "bgm_path": o["bgm_path"]}
+
+    def set_preview_source(self, path: "Path | None", duration: float = 0.0) -> None:
+        self.preview_source = (path, duration) if path and duration else None
+        self.mix_preview.refresh_source()
 
     def set_read_only(self, read_only: bool) -> None:
         """While a video is being processed: its settings can be looked at (tabs still
@@ -2705,6 +2739,7 @@ class MainWindow(QWidget):
                 self._set_status(f"✗  {job.path.name}: {job.error}", _RED)
         else:
             self._opts.set_read_only(False)
+            self._opts.set_preview_source(None)
             self._info.show_info(None)
             self._export.set_source(None)
             self._lbl_editing.setText("Cấu hình mặc định cho video mới")
@@ -2716,6 +2751,7 @@ class MainWindow(QWidget):
         self._preview_timer.start()
         self._export.set_source(job.info)
         self._opts.set_trim_limit(job.info.duration if job.info else 0.0)
+        self._opts.set_preview_source(job.path, job.info.duration if job.info else 0.0)
         if not job.probed():
             self._probe_next()
 
@@ -3579,6 +3615,8 @@ class MainWindow(QWidget):
             self._save_state()
         except Exception:   # never block closing the app
             log.exception("Could not save the window / queue state")
+        self._opts.mix_preview.stop()
+        self._opts.mix_preview.wait(3000)   # a preview window still being prepared
         self._probe_runner.wait_all(3000)   # an ffprobe still reading a video
         self._frame_runner.wait_all(3000)
         super().closeEvent(event)

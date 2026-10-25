@@ -76,6 +76,14 @@ def move_jobs(old_root: Path, new_root: Path) -> int:
     return n
 
 
+def input_sig(video_path: Path, trim: "tuple | None" = None) -> dict:
+    """What a job dir's cache is valid for: this exact source file + trim range."""
+    src = video_path.resolve()
+    st = src.stat()
+    return {"source": str(src), "size": st.st_size, "mtime_ns": st.st_mtime_ns,
+            "trim": list(trim) if trim else None}
+
+
 def prepare_job_dir(video_path: Path, trim: "tuple | None" = None) -> Path:
     """Job dir for *video_path*, reused only for the same source file and trim range.
 
@@ -87,10 +95,7 @@ def prepare_job_dir(video_path: Path, trim: "tuple | None" = None) -> Path:
     import json
     import shutil
 
-    src = video_path.resolve()
-    st = src.stat()
-    sig = {"source": str(src), "size": st.st_size, "mtime_ns": st.st_mtime_ns,
-           "trim": list(trim) if trim else None}
+    sig = input_sig(video_path, trim)
     job_dir = job_dir_for(video_path)
     marker = job_dir / "input.json"
     try:
