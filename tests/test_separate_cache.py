@@ -54,7 +54,7 @@ def test_overlap_reaches_audio_separator(tmp_path, monkeypatch):
 
     class FakeSeparator:
         def __init__(self, **kw):
-            seen.update(kw.get("mdx_params", {}))
+            seen.update(kw.get("mdx_params", {}), chunk_duration=kw.get("chunk_duration"))
         def load_model(self, name): pass
         def separate(self, path):
             _fake_stems(tmp_path / "x_(Vocals)_m.wav", tmp_path / "x_(Instrumental)_m.wav")
@@ -67,8 +67,11 @@ def test_overlap_reaches_audio_separator(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", os.environ.get("PATH", ""))   # restored after the test
     monkeypatch.setattr(sep, "_find_ffmpeg", lambda: Path("/usr/bin/ffmpeg"))
     monkeypatch.setattr(sep, "_uvr_model_dir", lambda: tmp_path / "models")
+    monkeypatch.setattr(sep, "_mdxnet_available", lambda: True)
+    monkeypatch.setattr(sep, "SEPARATE_IN_CHILD", False)   # the fake lives in this process
     sep.separate_tracks(tmp_path / "a.wav", tmp_path, overlap=0.75)
     assert seen["overlap"] == 0.75 and seen["segment_size"] == 256
+    assert seen["chunk_duration"] == sep.CHUNK_S   # long videos would overflow RAM
 
 
 def test_fallback_marks_cache(tmp_path, monkeypatch):
@@ -123,3 +126,66 @@ def test_separation_lock_is_per_job_dir(tmp_path):
     from dubber.core.audio.separate import separation_lock
     assert separation_lock(tmp_path / "a") is separation_lock(tmp_path / "a")
     assert separation_lock(tmp_path / "a") is not separation_lock(tmp_path / "b")
+
+
+def test_cached_stems_matches_what_separate_tracks_reuses(tmp_path, monkeypatch):
+    out = tmp_path / "separated"
+    assert sep.cached_stems(out) is None
+    monkeypatch.setattr(sep, "_mdxnet_available", lambda: True)
+    monkeypatch.setattr(sep, "_separate_mdxnet", lambda a, d, v, i, cb, ov: _fake_stems(v, i))
+    stems = sep.separate_tracks(tmp_path / "a.wav", out, overlap=0.5)
+    assert sep.cached_stems(out, 0.5) == stems
+    assert sep.cached_stems(out, 0.75) is None
+
+
+def test_stems_drop_the_stereo_audio_and_skip_it_when_cached(tmp_path, monkeypatch):
+    """audio_stereo.wav is only the separator's input: not kept, not re-extracted."""
+    import dubber.core.pipeline as pl
+    extracted = []
+
+    def extract(self, v, out):
+        extracted.append(out)
+        out.write_bytes(b"wav")
+        return out
+    monkeypatch.setattr(pl.AudioExtractor, "extract_audio_stereo", extract)
+    monkeypatch.setattr(sep, "_mdxnet_available", lambda: True)
+    monkeypatch.setattr(sep, "_separate_mdxnet", lambda a, d, v, i, cb, ov: _fake_stems(v, i))
+    job = tmp_path / "job"
+    job.mkdir()
+    p = pl.Pipeline("ffmpeg", "ffprobe", job)
+    p.stems(tmp_path / "v.mp4")
+    assert len(extracted) == 1 and not (job / "audio_stereo.wav").exists()
+    p.stems(tmp_path / "v.mp4")
+    assert len(extracted) == 1
+
+
+def _child_ready() -> bool:
+    return sep._mdxnet_available()
+
+
+def test_child_process_is_stopped_by_a_cancel(tmp_path):
+    """The separation runs in a child process; a raising progress callback ends it."""
+    import pytest
+    if not _child_ready():
+        pytest.skip("audio-separator not installed")
+
+    class Cancelled(Exception):
+        pass
+
+    def cb(pct):
+        raise Cancelled
+    import multiprocessing
+    with pytest.raises(Cancelled):
+        sep._separate_mdxnet(tmp_path / "missing.wav", tmp_path, tmp_path / "v.wav",
+                             tmp_path / "i.wav", cb)
+    assert not [c for c in multiprocessing.active_children() if c.name == "dubber-separate"]
+
+
+def test_child_process_error_comes_back(tmp_path):
+    import pytest
+    if not _child_ready() or not (sep._uvr_model_dir() / sep.MODEL_NAME).is_file():
+        pytest.skip("audio-separator / MDX-Net model not installed")   # never downloads
+    (tmp_path / "bad.wav").write_bytes(b"not a wav")
+    with pytest.raises(RuntimeError):
+        sep._separate_mdxnet(tmp_path / "bad.wav", tmp_path, tmp_path / "v.wav",
+                             tmp_path / "i.wav", None)

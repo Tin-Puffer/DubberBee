@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dubber"
-version = "0.4.0"
+version = "0.4.1"
 description = "Vietnamese dubbing tool for Chinese videos"
 requires-python = ">=3.10"
 dependencies = [
@@ -34,7 +34,7 @@ dependencies = [
 # AI music/voice separation (MDX-Net): cleaner background mix and ASR on the voice only.
 # Without it the FFmpeg fallback is very poor and ASR uses the original audio.
 separation = [
-    "audio-separator[cpu]>=0.30",
+    "audio-separator[cpu]>=0.47",
     "audioread>=3.0",
 ]
 # Offline translation (MarianMT / NLLB) + separation — ~1-2 GB

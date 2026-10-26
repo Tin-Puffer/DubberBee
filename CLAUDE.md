@@ -128,6 +128,8 @@ dubber/
     │   └── separate.py      # tách nhạc nền (audio-separator, hoặc FFmpeg fallback); chất lượng = overlap
     │                        # theo từng video (0,1/0,25/0,5 mặc định/0,75), đổi mức chỉ tách lại, giữ ASR/dịch;
     │                        # hàng đợi tách trước video kế khi video đang chạy đã dịch xong
+    │                        # chạy trong TIẾN TRÌNH CON (spawn, ~5 GB lúc đỉnh, xong trả hết RAM; Hủy = dừng
+    │                        # tiến trình con), chia đoạn CHUNK_S=120s (không thì RAM tăng ~0,25 GB/phút)
     ├── video/
     │   ├── subtitles.py     # build_ass(): cắt câu thành dòng 1 dòng, viền/màu chữ
     │   ├── text_metrics.py  # đo chữ như libass (Pillow + bảng OS/2 của font)
@@ -204,7 +206,7 @@ sửa `MODELS_MIRROR_URL`.
 
 ---
 
-## Trạng thái hiện tại (cập nhật 2026-10-23)
+## Trạng thái hiện tại (cập nhật 2026-10-26)
 
 - [x] M1 ASR (sherpa-onnx SenseVoice)
 - [x] M2 Dịch (Groq online + MarianMT/NLLB offline)
@@ -238,6 +240,10 @@ sửa `MODELS_MIRROR_URL`.
       keyring `Dubber`, tên file build `Dubber.app`/`Dubber.exe` giữ nguyên
 - [x] Bản đóng gói không kèm models (tải lần đầu vào user-data) + tự cập nhật từ GitHub Releases
       (⚙ Cài đặt → Cập nhật); gỡ cài đặt (Uninstall / xóa dữ liệu) để sau
+- [x] Video dài (30 phút tràn RAM 16 GB): tách nhạc trong tiến trình con + chia đoạn 2 phút,
+      FSMN-VAD tạo đặc trưng từng đoạn (2,6 → 0,9 GB), NLLB fp16 trên GPU + trả bộ nhớ torch sau
+      khi dịch; đĩa: không giữ `audio_stereo.wav` / `background_mixed.wav`, `output.mp4` được
+      chuyển (move) sang thư mục xuất thay vì sao chép
 
 ---
 

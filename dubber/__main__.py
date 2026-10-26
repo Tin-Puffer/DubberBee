@@ -17,17 +17,18 @@ def _setup_logging(verbose: bool = False) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Frozen Windows build: a child process spawned by multiprocessing (torch / librosa
-    # workers) re-runs Dubber.exe — this makes it run the worker instead of a second GUI.
-    import multiprocessing
-    multiprocessing.freeze_support()
     # Windowed Windows build has no console: sys.stdout/stderr are None and any library
-    # progress bar (tqdm in audio-separator, HF downloads) would crash on .write()
+    # progress bar (tqdm in audio-separator, HF downloads) would crash on .write().
+    # Before freeze_support: the child processes it starts need it too
     import os
     if sys.stdout is None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    # Frozen build: a child process spawned by multiprocessing (music separation, torch /
+    # librosa workers) re-runs Dubber — this makes it run the worker instead of a second GUI.
+    import multiprocessing
+    multiprocessing.freeze_support()
 
     parser = argparse.ArgumentParser(
         prog="dubber",

@@ -144,11 +144,19 @@ class NLLBTranslator(Translator):
 
         log.info("Loading NLLB model: %s (lần đầu cần tải ~5.5GB)", self._model_name)
         try:
-            self._tokenizer, model = self._from_pretrained(AutoTokenizer, AutoModelForSeq2SeqLM)
+            self._device = _best_device()
+            # Half precision on the GPU: 2.7 GB instead of 5.5 (and ~1.5× faster on M1 MPS);
+            # the translations came out word for word the same as in float32
+            import torch
+            import transformers
+            dtype = torch.float16 if self._device in ("mps", "cuda") else None
+            # "torch_dtype" before transformers 5 (deprecated there)
+            dtype_kw = "dtype" if int(transformers.__version__.split(".")[0]) >= 5 else "torch_dtype"
+            self._tokenizer, model = self._from_pretrained(AutoTokenizer, AutoModelForSeq2SeqLM,
+                                                           **{dtype_kw: dtype})
             # Must be set on the tokenizer: transformers 5 ignores src_lang passed per call,
             # and NLLB then treats the input as English and copies the Chinese through.
             self._tokenizer.src_lang = self.SRC_LANG
-            self._device = _best_device()
             self._model = model.to(self._device)
         except (MemoryError, RuntimeError) as exc:
             if isinstance(exc, MemoryError) or "memory" in str(exc).lower():
@@ -159,17 +167,17 @@ class NLLBTranslator(Translator):
         self._model.eval()
         log.info("NLLB model ready (%s)", self._device)
 
-    def _from_pretrained(self, tok_cls, model_cls):
+    def _from_pretrained(self, tok_cls, model_cls, **model_kw):
         """Tokenizer + model, preferring the pinned safetensors commit."""
         if self._revision:
             try:
                 return (tok_cls.from_pretrained(self._model_name, revision=self._revision),
                         model_cls.from_pretrained(self._model_name, revision=self._revision,
-                                                  use_safetensors=True))
+                                                  use_safetensors=True, **model_kw))
             except OSError as exc:   # commit gone / not cached offline → plain main branch
                 log.warning("NLLB safetensors revision unavailable (%s) — using main", exc)
         return (tok_cls.from_pretrained(self._model_name),
-                model_cls.from_pretrained(self._model_name))
+                model_cls.from_pretrained(self._model_name, **model_kw))
 
     def translate(self, segments: List[TranslateSegment]) -> List[TranslateResult]:
         if not segments:

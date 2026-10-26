@@ -30,6 +30,10 @@ OVERLAPS = (0.1, 0.25, 0.5, 0.75)
 DEFAULT_OVERLAP = 0.5
 # Stems cached before the overlap was recorded were made with audio-separator's default
 LEGACY_OVERLAP = 0.25
+# Longer audio is separated in pieces of this many seconds: audio-separator holds the whole
+# file's spectrogram in memory (M1 Pro: 4.9 GB for 8 s, 7.4 GB for 10 min, a 30-min video
+# overflowed 16 GB RAM); in 2-min pieces 10 min stays at 5.9 GB. The joins are inaudible
+CHUNK_S = 120
 
 
 _locks: "dict[str, threading.RLock]" = {}
@@ -54,28 +58,21 @@ def separate_tracks(
     Returns (vocals_wav, instrumental_wav).
     Caches results in output_dir — reused only when made with the same model + *overlap*.
     """
+    cached = cached_stems(output_dir, overlap)
+    if cached:
+        log.info("Reusing cached separation: %s, %s (overlap %s)",
+                 cached[0].name, cached[1].name, overlap)
+        return cached
+
     vocals_out       = output_dir / "vocals.wav"
     instrumental_out = output_dir / "instrumental.wav"
-
     fallback_marker = output_dir / ".ffmpeg_fallback"
     sig = {"model": MODEL_NAME, "overlap": overlap}
-
     if vocals_out.exists() and instrumental_out.exists():
-        if fallback_marker.exists():
-            # Don't keep reusing poor fallback stems once the real separator is installed
-            if not _mdxnet_available():
-                log.info("Reusing cached (FFmpeg fallback) separation")
-                return vocals_out, instrumental_out
-            log.info("Cached separation came from the FFmpeg fallback — redoing with MDX-Net")
-        elif _stems_sig(vocals_out) == sig:
-            log.info("Reusing cached separation: %s, %s (overlap %s)",
-                     vocals_out.name, instrumental_out.name, overlap)
-            return vocals_out, instrumental_out
-        else:
-            log.info("Cached separation was made with other settings — separating again "
-                     "(overlap %s)", overlap)
-        for p in (vocals_out, instrumental_out, fallback_marker, sig_path(vocals_out)):
-            p.unlink(missing_ok=True)
+        log.info("Cached separation was made with other settings (or by the FFmpeg "
+                 "fallback) — separating again (overlap %s)", overlap)
+    for p in (vocals_out, instrumental_out, fallback_marker, sig_path(vocals_out)):
+        p.unlink(missing_ok=True)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -94,6 +91,20 @@ def separate_tracks(
         fallback_marker.touch()
 
     return vocals_out, instrumental_out
+
+
+def cached_stems(output_dir: Path, overlap: float = DEFAULT_OVERLAP
+                 ) -> "tuple[Path, Path] | None":
+    """(vocals, instrumental) in *output_dir* when separate_tracks would reuse them."""
+    vocals, instrumental = output_dir / "vocals.wav", output_dir / "instrumental.wav"
+    if not (vocals.exists() and instrumental.exists()):
+        return None
+    if (output_dir / ".ffmpeg_fallback").exists():
+        # Don't keep reusing poor fallback stems once the real separator is installed
+        return None if _mdxnet_available() else (vocals, instrumental)
+    if _stems_sig(vocals) == {"model": MODEL_NAME, "overlap": overlap}:
+        return vocals, instrumental
+    return None
 
 
 def _stems_sig(vocals: Path) -> dict:
@@ -158,10 +169,13 @@ def download_uvr_upstream(d: "Path | None" = None) -> Path:
 
 
 def _mdxnet_available() -> bool:
+    # Only looked up, not imported: importing it loads torch (~270 MB) into the GUI, while
+    # the separation itself runs in a child process. A broken install raises ImportError
+    # there, and separate_tracks falls back to FFmpeg
+    from importlib.util import find_spec
     try:
-        from audio_separator.separator import Separator  # noqa: F401
-        return True
-    except ImportError:
+        return find_spec("audio_separator") is not None
+    except (ImportError, ValueError):
         return False
 
 
@@ -185,7 +199,98 @@ def _uvr_model_dir() -> Path:
         return Path(_sys.executable).parent.parent / "uvr-models"
 
 
+# Separation runs in a child process: audio-separator + CoreML need ~5 GB at their peak,
+# and ~1.6 GB of it stayed in the app until it was closed. When the child exits it is all
+# given back, and a cancel stops the child at once. Tests turn it off
+SEPARATE_IN_CHILD = True
+
+
 def _separate_mdxnet(
+    audio_path: Path,
+    output_dir: Path,
+    vocals_out: Path,
+    instrumental_out: Path,
+    progress_cb=None,
+    overlap: float = DEFAULT_OVERLAP,
+) -> None:
+    """MDX-Net separation in a child process; progress / errors / log lines come back.
+
+    *progress_cb* is also called (with the last value) every half second, so a cancel
+    check in it can stop the child. Raises ImportError when audio-separator can't load.
+    """
+    args = (audio_path, output_dir, vocals_out, instrumental_out, overlap)
+    if not SEPARATE_IN_CHILD:
+        _separate_mdxnet_here(*args[:4], progress_cb, overlap)
+        return
+    if not _mdxnet_available():
+        raise ImportError("audio_separator is not installed")
+    import multiprocessing
+    import queue as _queue
+
+    ctx = multiprocessing.get_context("spawn")
+    q = ctx.Queue()
+    proc = ctx.Process(target=_separate_child, args=(args, q, logging.getLogger().level),
+                       name="dubber-separate")
+    proc.start()
+    done = False
+    try:
+        last = None
+        while True:
+            try:
+                msg = q.get(timeout=0.5)
+            except _queue.Empty:
+                if not proc.is_alive():
+                    raise RuntimeError("Music separation stopped unexpectedly "
+                                       f"(exit code {proc.exitcode}) — out of memory?")
+                if progress_cb and last is not None and 0 < last < 1:
+                    progress_cb(last)
+                continue
+            if isinstance(msg, logging.LogRecord):
+                logging.getLogger(msg.name).handle(msg)
+                continue
+            kind, value = msg
+            if kind == "progress":
+                last = value
+                if progress_cb:
+                    progress_cb(value)
+            elif kind == "done":
+                done = True
+                break
+            else:
+                is_import, text = value
+                raise (ImportError if is_import else RuntimeError)(text)
+    finally:
+        if done:
+            proc.join(30)
+        if proc.is_alive():
+            proc.terminate()
+        proc.join(5)
+        q.close()
+
+
+def _separate_child(args, q, log_level: int) -> None:
+    """Child process: run the separation, send progress / log records / result to *q*."""
+    import os
+    import sys
+    from logging.handlers import QueueHandler
+    # A windowed build has no stdout / stderr, and audio-separator's tqdm writes to them
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    root = logging.getLogger()
+    root.handlers[:] = [QueueHandler(q)]
+    root.setLevel(log_level)
+    try:
+        audio_path, output_dir, vocals_out, instrumental_out, overlap = args
+        _separate_mdxnet_here(audio_path, output_dir, vocals_out, instrumental_out,
+                              lambda pct: q.put(("progress", pct)), overlap)
+        q.put(("done", None))
+    except BaseException as exc:   # noqa: BLE001 — everything goes back to the parent
+        q.put(("error", (isinstance(exc, ImportError), f"{type(exc).__name__}: {exc}")))
+
+
+def _separate_mdxnet_here(
     audio_path: Path,
     output_dir: Path,
     vocals_out: Path,
@@ -215,6 +320,7 @@ def _separate_mdxnet(
         output_format="WAV",
         log_level=logging.WARNING,
         mdx_params={**MDX_PARAMS, "overlap": overlap},
+        chunk_duration=CHUNK_S,
     )
     sep.load_model(MODEL_NAME)
 

@@ -18,6 +18,7 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 _CHUNK_FRAMES = 6000   # feature frames per inference call (60 s), as upstream
+_FEED_SAMPLES = 16000 * 30   # samples handed to the fbank at a time
 
 
 class FsmnVAD:
@@ -53,8 +54,10 @@ class FsmnVAD:
         """[(start_s, end_s), …] for float32 samples in [-1, 1] at 16 kHz."""
         from dubber.core.asr._fsmn_e2e_vad import E2EVadModel
 
-        feats = self.features(samples)
-        n = feats.shape[0]
+        # Features are made one inference chunk at a time: for a 30-min video the whole
+        # matrix is 180 000 × 400 floats, and building it at once peaked at ~2.5 GB
+        fbank = self._fbank(samples)
+        n = self._n_lfr(fbank)
         if n == 0:
             return []
         scorer = E2EVadModel(self._vad_conf)
@@ -68,7 +71,7 @@ class FsmnVAD:
             if is_final:
                 end = n
             outputs = self._sess.run(None, dict(zip(self._in_names,
-                                                    [feats[None, off:end, :], *caches])))
+                                                    [self._lfr_cmvn(fbank, off, end)[None], *caches])))
             scores, caches = outputs[0], outputs[1:]
             # waveform slice matching these frames (10 ms shift, 25 ms window)
             wave_part = wave[:, off * 160: min(wave.shape[-1], (end - 1) * 160 + 400)]
@@ -81,6 +84,11 @@ class FsmnVAD:
 
     def features(self, samples: np.ndarray) -> np.ndarray:
         """fbank → LFR → CMVN, shape (frames, n_mels * lfr_m)."""
+        fbank = self._fbank(samples)
+        return self._lfr_cmvn(fbank, 0, self._n_lfr(fbank))
+
+    def _fbank(self, samples: np.ndarray) -> np.ndarray:
+        """Kaldi fbank, shape (frames, n_mels)."""
         import kaldi_native_fbank as knf
 
         c = self._frontend_conf
@@ -96,42 +104,48 @@ class FsmnVAD:
         opts.mel_opts.debug_mel = False
 
         fb = knf.OnlineFbank(opts)
-        fb.accept_waveform(c["fs"], (samples * (1 << 15)).tolist())
+        # Fed in pieces: the binding takes a Python list, ~32 bytes a sample
+        step = _FEED_SAMPLES
+        for i in range(0, len(samples), step):
+            fb.accept_waveform(c["fs"], (samples[i:i + step] * (1 << 15)).tolist())
         n = fb.num_frames_ready
         mat = np.empty((n, c["n_mels"]), dtype=np.float32)
         for i in range(n):
             mat[i] = fb.get_frame(i)
-        if n == 0:
+        return mat
+
+    def _n_lfr(self, fbank: np.ndarray) -> int:
+        return int(np.ceil(fbank.shape[0] / self._frontend_conf["lfr_n"]))
+
+    def _lfr_cmvn(self, fbank: np.ndarray, start: int, stop: int) -> np.ndarray:
+        """LFR + CMVN rows [start, stop)."""
+        c = self._frontend_conf
+        if fbank.shape[0] == 0:
             return np.zeros((0, c["n_mels"] * c["lfr_m"]), dtype=np.float32)
-        feats = apply_lfr(mat, c["lfr_m"], c["lfr_n"])
+        feats = apply_lfr(fbank, c["lfr_m"], c["lfr_n"], start, stop)
         return apply_cmvn(feats, self._cmvn)
 
 
 # ── Frontend helpers (from funasr_onnx/utils/frontend.py) ─────────────────────
 
-def apply_lfr(inputs: np.ndarray, lfr_m: int, lfr_n: int) -> np.ndarray:
-    """Low frame rate: stack lfr_m frames every lfr_n, repeating edge frames."""
+def apply_lfr(inputs: np.ndarray, lfr_m: int, lfr_n: int,
+              start: int = 0, stop: "int | None" = None) -> np.ndarray:
+    """Low frame rate: stack lfr_m frames every lfr_n, repeating edge frames.
+
+    Only output rows [start, stop) are built (all by default)."""
     if lfr_m == 1 and lfr_n == 1:
-        return inputs.astype(np.float32)
+        return inputs[start:stop].astype(np.float32)
     t = inputs.shape[0]
-    t_lfr = int(np.ceil(t / lfr_n))
+    stop = int(np.ceil(t / lfr_n)) if stop is None else stop
     left = (lfr_m - 1) // 2
-    padded = np.vstack([np.tile(inputs[0], (left, 1)), inputs])
-    total = t + left
-    rows = []
-    for i in range(t_lfr):
-        if lfr_m <= total - i * lfr_n:
-            rows.append(padded[i * lfr_n: i * lfr_n + lfr_m].reshape(-1))
-        else:   # last frames: pad with the final frame
-            frame = padded[i * lfr_n:].reshape(-1)
-            pad = lfr_m - (total - i * lfr_n)
-            rows.append(np.hstack([frame] + [padded[-1]] * pad))
-    return np.vstack(rows).astype(np.float32)
+    # Upstream pads with the first frame on the left and the last one on the right
+    idx = np.arange(start, stop)[:, None] * lfr_n + np.arange(lfr_m) - left
+    return inputs[np.clip(idx, 0, t - 1)].reshape(len(idx), -1).astype(np.float32)
 
 
 def apply_cmvn(inputs: np.ndarray, cmvn: np.ndarray) -> np.ndarray:
     dim = inputs.shape[1]
-    return ((inputs + cmvn[0:1, :dim]) * cmvn[1:2, :dim]).astype(np.float32)
+    return ((inputs + cmvn[0:1, :dim]) * cmvn[1:2, :dim]).astype(np.float32, copy=False)
 
 
 def load_cmvn(path: Path) -> np.ndarray:
@@ -148,4 +162,5 @@ def load_cmvn(path: Path) -> np.ndarray:
             means = nxt[3:-1]
         elif item[0] == "<Rescale>" and nxt and nxt[0] == "<LearnRateCoef>":
             variances = nxt[3:-1]
-    return np.array([np.array(means, dtype=np.float64), np.array(variances, dtype=np.float64)])
+    # float32: float64 here made every feature matrix float64 too (twice the memory)
+    return np.array([np.array(means, dtype=np.float32), np.array(variances, dtype=np.float32)])

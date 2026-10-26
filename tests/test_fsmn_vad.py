@@ -36,6 +36,17 @@ def test_lfr_stacks_frames():
     assert np.array_equal(out[-1, 320:], feats[-1])
 
 
+
+def test_lfr_row_range_matches_whole():
+    feats = np.random.default_rng(0).random((50, 80), dtype=np.float32)
+    whole = apply_lfr(feats, lfr_m=5, lfr_n=1)
+    parts = np.vstack([apply_lfr(feats, 5, 1, a, min(a + 7, 50)) for a in range(0, 50, 7)])
+    assert np.array_equal(whole, parts)
+    # lfr_n > 1: one row every lfr_n frames, the tail padded with the last frame
+    out = apply_lfr(feats, lfr_m=7, lfr_n=6)
+    assert out.shape == (9, 560)
+    assert np.array_equal(out[-1, -80:], feats[-1])
+
 def test_cmvn_shift_and_scale(tmp_path):
     mvn = tmp_path / "am.mvn"
     mvn.write_text(

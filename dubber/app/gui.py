@@ -470,7 +470,9 @@ class PipelineWorker(QObject):
             from dubber.core.utils.settings import resolve_output_path
             dest = resolve_output_path(self.input_path, self.output_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(output_mp4, dest)
+            # Moved, not copied: every render makes a new one, so the job dir needn't keep
+            # a second copy of the video (copied + deleted across drives)
+            shutil.move(str(output_mp4), str(dest))
             self._write_tiktok_txt(translate_json, dest)
             self.finished.emit(dest)
 

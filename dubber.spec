@@ -51,7 +51,7 @@ transformers_datas, transformers_binaries, transformers_hiddenimports = collect_
 # Separation (audio-separator) + VieNeu-TTS and their data files / native libs
 extra_datas, extra_binaries, extra_hiddenimports = [], [], []
 for _pkg in ('audio_separator', 'torchvision', 'vieneu', 'vieneu_utils', 'sea_g2p', 'librosa', 'soxr',
-             'kaldi_native_fbank', 'keyring', 'pyvi', 'pycrfsuite', 'sklearn_crfsuite'):
+             'kaldi_native_fbank', 'pydub', 'keyring', 'pyvi', 'pycrfsuite', 'sklearn_crfsuite'):
     if not _installed(_pkg):
         print(f'[dubber.spec] {_pkg} not installed — not bundled')
         continue

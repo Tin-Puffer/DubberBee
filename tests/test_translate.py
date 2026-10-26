@@ -464,7 +464,7 @@ def test_nllb_other_model_has_no_pinned_revision():
 def test_nllb_out_of_memory_gives_clear_message(monkeypatch):
     pytest.importorskip("transformers")
     tr = lt.NLLBTranslator()
-    monkeypatch.setattr(tr, "_from_pretrained", lambda *a: (_ for _ in ()).throw(MemoryError()))
+    monkeypatch.setattr(tr, "_from_pretrained", lambda *a, **k: (_ for _ in ()).throw(MemoryError()))
     with pytest.raises(RuntimeError, match="không đủ RAM"):
         tr._load()
 

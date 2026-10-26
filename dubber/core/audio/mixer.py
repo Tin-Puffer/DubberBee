@@ -56,7 +56,6 @@ def build_dub_wav(
             log.warning("Seg %d runs past the end of the video — cut", seg.id)
         track[start_sample:end_sample] += seg_samples[:length]
 
-    track = np.clip(track, -1.0, 1.0)
     _write_wav_float32(output_path, track, sample_rate)
     log.info("dub.wav written: %d segments, %.1fs @ %d Hz → %s",
              len(segments), total_duration, sample_rate, output_path)
@@ -84,12 +83,16 @@ def _read_wav_float32(path: Path) -> tuple[np.ndarray, int]:
 
 
 def _write_wav_float32(path: Path, samples: np.ndarray, sr: int) -> None:
-    samples_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    # In pieces: a 30-min track at 48 kHz is 350 MB as float32, each full-length
+    # temporary copy as much again
+    step = sr * 60
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sr)
-        wf.writeframes(samples_int16.tobytes())
+        for i in range(0, len(samples), step):
+            part = np.clip(samples[i:i + step], -1.0, 1.0) * 32767
+            wf.writeframes(part.astype(np.int16).tobytes())
 
 
 def _resample(samples: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:

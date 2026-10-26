@@ -274,7 +274,8 @@ def test_worker_keeps_job_for_same_input(tmp_path, monkeypatch):
     txt = (tmp_path / "out" / "clip_vi.txt").read_text(encoding="utf-8")
     assert "Hashtag: #... #... #... #... #..." in txt and txt.rstrip().endswith("[1] Xin chào.")
     job = seen["job_dir"]
-    assert (job / "asr.json").exists() and (job / "output.mp4").exists()   # nothing auto-deleted
+    assert (job / "asr.json").exists()            # caches are never auto-deleted
+    assert not (job / "output.mp4").exists()      # the video is moved out, not kept twice
 
     seen, _ = _run_worker(tmp_path, monkeypatch, src)            # same file → cache kept
     assert "asr.json" in seen["files_at_start"]

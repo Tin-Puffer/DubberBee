@@ -145,12 +145,19 @@ class Pipeline:
         Holds the job dir's separation lock, so a queue prefetch of the same video
         (prefetch_stems) and this run never write the stems at the same time.
         """
-        from dubber.core.audio.separate import separate_tracks, separation_lock
+        from dubber.core.audio.separate import cached_stems, separate_tracks, separation_lock
         with separation_lock(self.job_dir):
+            sep_dir = self.job_dir / "separated"
+            cached = cached_stems(sep_dir, self.sep_overlap)
+            if cached:
+                return cached
             stereo_wav = self.job_dir / "audio_stereo.wav"
             self._extractor.extract_audio_stereo(input_path, stereo_wav)
-            return separate_tracks(stereo_wav, self.job_dir / "separated",
-                                   progress_cb=on_separate, overlap=self.sep_overlap)
+            stems = separate_tracks(stereo_wav, sep_dir,
+                                    progress_cb=on_separate, overlap=self.sep_overlap)
+            # Only needed to separate again (~10 MB a minute) — extracted anew if so
+            stereo_wav.unlink(missing_ok=True)
+            return stems
 
     def _vocals_for_asr(self, input_path: Path, audio_wav: Path, on_separate=None) -> Path:
         """16 kHz mono vocal stem for ASR, or *audio_wav* when that isn't possible.
@@ -460,30 +467,34 @@ class Pipeline:
 
         output_mp4 = self.job_dir / "output.mp4"
         log.info("=== M5 render start ===")
-        self._renderer.render_final(
-            video_path=input_path,
-            dub_wav=dub_wav,
-            ass_path=subs_ass,
-            output_path=output_mp4,
-            orig_volume=effective_volume,
-            vi_volume=vi_volume,
-            background_wav=background_wav,
-            blur_band=active_blur_band,
-            target_video_kbps=video_info.video_bitrate_kbps,
-            on_progress=_cbs.get("render"),
-            scale=scale,
-            fps=fps,
-            crf=crf,
-            encoder_preset=encoder_preset,
-            audio_bitrate=audio_bitrate,
-            fonts_dir=fonts_dir(),
-            logo=logo_arg,
-            flip=flip,
-            music=music_arg,
-            portrait=portrait,
-            brightness=brightness,
-            **({} if bg_brightness is None else {"bg_brightness": bg_brightness}),
-        )
+        try:
+            self._renderer.render_final(
+                video_path=input_path,
+                dub_wav=dub_wav,
+                ass_path=subs_ass,
+                output_path=output_mp4,
+                orig_volume=effective_volume,
+                vi_volume=vi_volume,
+                background_wav=background_wav,
+                blur_band=active_blur_band,
+                target_video_kbps=video_info.video_bitrate_kbps,
+                on_progress=_cbs.get("render"),
+                scale=scale,
+                fps=fps,
+                crf=crf,
+                encoder_preset=encoder_preset,
+                audio_bitrate=audio_bitrate,
+                fonts_dir=fonts_dir(),
+                logo=logo_arg,
+                flip=flip,
+                music=music_arg,
+                portrait=portrait,
+                brightness=brightness,
+                **({} if bg_brightness is None else {"bg_brightness": bg_brightness}),
+            )
+        finally:
+            if background_wav is not None and background_wav.name == "background_mixed.wav":
+                background_wav.unlink(missing_ok=True)   # remade from the stems each render
         log.info("=== M5 done → %s ===", output_mp4)
         return asr_json, translate_json, dub_wav, subs_ass, output_mp4
 
@@ -568,13 +579,19 @@ class Pipeline:
             backend.on_rate_limit = self.on_rate_limit
         log.info("=== M2 translate start  %d segments  backend=%s ===",
                  len(asr_segments), backend.__class__.__name__)
-        results = backend.translate(translate_segs)
+        try:
+            results = backend.translate(translate_segs)
+        finally:
+            names = getattr(backend, "names", None)
+            # An offline model is only used here — let its GB go before TTS / render
+            del backend
+            from dubber.core.utils.gpu import release_torch_memory
+            release_torch_memory()
 
         # Clean-up after any translator: spacing, capitals, no dangling commas; proper
         # names as Groq spelled them (other translators don't report names)
         from dubber.core.translate.base import TranslateResult
         from dubber.core.translate.normalize_vi import normalize_text
-        names = getattr(backend, "names", None)
         names = names if isinstance(names, dict) else None
         src = {i: s.text for i, s in enumerate(asr_segments)}
         results = [TranslateResult(id=r.id, vi=normalize_text(r.vi, src.get(r.id, ""), names))
