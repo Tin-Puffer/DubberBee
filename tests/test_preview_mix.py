@@ -27,25 +27,26 @@ def _tracks(**names) -> pm.PreviewTracks:
 
 
 ALL = dict(orig=0.1, music=0.1, cn=0.1, dub=0.1, bgm=0.1)
-BASE = dict(vi_on=True, vi=1.0, music_on=True, music=0.4, cn_on=True, cn=0.2,
-            bgm_on=False, bgm=0.3)
+BASE = dict(vi_on=True, vi=0, music_on=True, music=-8, cn_on=True, cn=-14,
+            bgm_on=False, bgm=-10)
 
 
 def _on(g):
-    return {k: round(v, 3) for k, v in g.items() if v}
+    """Gains that are on, in dB."""
+    return {k: round(20 * np.log10(v), 1) for k, v in g.items() if v}
 
 
 # ── mixing rules (same as run_m5 / render_final) ──────────────────────────────
 
 @pytest.mark.parametrize("change, expected", [
-    ({}, {"music": 0.4, "cn": 0.2, "dub": 1.0}),                    # different → stems
-    ({"cn": 0.4}, {"orig": 0.4, "dub": 1.0}),                       # same → original track
-    ({"cn_on": False}, {"music": 0.4, "dub": 1.0}),                 # only music
-    ({"music_on": False}, {"cn": 0.2, "dub": 1.0}),                 # only Chinese voice
-    ({"cn_on": False, "music": 0.0}, {"music": 0.2, "dub": 1.0}),   # on at 0 % → 20 %
-    ({"music_on": False, "cn_on": False}, {"dub": 1.0}),
-    ({"vi_on": False}, {"music": 0.4, "cn": 0.2}),
-    ({"vi": 1.5, "bgm_on": True}, {"music": 0.4, "cn": 0.2, "dub": 1.5, "bgm": 0.3}),
+    ({}, {"music": -8, "cn": -14, "dub": 0}),                       # different → stems
+    ({"cn": -8}, {"orig": -8, "dub": 0}),                           # same → original track
+    ({"cn_on": False}, {"music": -8, "dub": 0}),                    # only music
+    ({"music_on": False}, {"cn": -14, "dub": 0}),                   # only Chinese voice
+    ({"cn_on": False, "music": -40}, {"music": -40, "dub": 0}),
+    ({"music_on": False, "cn_on": False}, {"dub": 0}),
+    ({"vi_on": False}, {"music": -8, "cn": -14}),
+    ({"vi": 6, "bgm_on": True}, {"music": -8, "cn": -14, "dub": 6, "bgm": -10}),
 ])
 def test_track_gains_follow_the_render_rules(change, expected):
     assert _on(pm.track_gains(_tracks(**ALL), {**BASE, **change})) == expected
@@ -53,8 +54,18 @@ def test_track_gains_follow_the_render_rules(change, expected):
 
 def test_without_stems_the_original_track_stands_in():
     tr = _tracks(orig=0.1, dub=0.1)                    # separation failed
-    assert _on(pm.track_gains(tr, BASE)) == {"orig": 0.4, "dub": 1.0}
-    assert _on(pm.track_gains(tr, {**BASE, "music_on": False})) == {"orig": 0.2, "dub": 1.0}
+    assert _on(pm.track_gains(tr, BASE)) == {"orig": -8, "dub": 0}
+    assert _on(pm.track_gains(tr, {**BASE, "music_on": False})) == {"orig": -14, "dub": 0}
+
+
+def test_each_track_is_brought_to_the_reference_loudness_first():
+    tr = _tracks(**ALL)
+    tr.lufs = {"dub": -16.0, "cn": -30.0, "music": -60.5, "orig": -20.0}
+    g = _on(pm.track_gains(tr, BASE))
+    assert g["dub"] == 0 and g["cn"] == 0          # −30 LUFS: +14 dB, then −14 dB
+    assert g["music"] == -8                         # silent stem: not raised
+    tr.lufs["cn"] = -50.0
+    assert _on(pm.track_gains(tr, BASE))["cn"] == 18 - 14   # boost capped at MAX_BOOST_DB
 
 
 def test_missing_voice_or_music_track_gets_no_gain():
@@ -217,11 +228,11 @@ def test_volume_changes_are_heard_at_once(qapp):
     tr = pm.PreviewTracks(start=0.0, frames=n, arrays={
         "music": _noise(n, 0.05, 1), "cn": _noise(n, 0.05, 2), "dub": _noise(n, 0.05, 3),
         "orig": _noise(n, 0.07, 4)})
-    dev = MixDevice(tr, {**BASE, "music": 0.3})
+    dev = MixDevice(tr, {**BASE, "music": -10})
     for _ in range(6):
         dev.render(4800)                                # settle the loudness gain
     before = dev.levels["Nhạc nền"]
-    dev.set_volumes({**BASE, "music": 1.0})
+    dev.set_volumes({**BASE, "music": 0})
     for _ in range(3):
         dev.render(4800)                                # ≤ 0.3 s later
     assert dev.levels["Nhạc nền"] > before + 0.05
@@ -235,7 +246,7 @@ def test_stream_loops_the_window_and_never_clips(qapp):
     from dubber.app.mix_preview import MixDevice
     n = 3000
     tr = pm.PreviewTracks(start=0.0, frames=n, arrays={"dub": np.full((n, 2), 0.9, np.float32)})
-    dev = MixDevice(tr, {**BASE, "vi": 2.0, "music_on": False, "cn_on": False})
+    dev = MixDevice(tr, {**BASE, "vi": 6, "music_on": False, "cn_on": False})
     out = np.frombuffer(dev.render(n + 500), "<i2")
     assert len(out) == (n + 500) * 2 and dev.pos == 500
     assert np.abs(out).max() <= int(0.89 * 32767) + 1
@@ -246,11 +257,11 @@ def test_warns_when_the_background_covers_the_voice(qapp):
     n = pm.SR
     tr = pm.PreviewTracks(start=0.0, frames=n, arrays={
         "music": _noise(n, 0.2, 1), "cn": _noise(n, 0.01, 2), "dub": _noise(n, 0.05, 3)})
-    dev = MixDevice(tr, {**BASE, "music": 1.0, "cn": 0.1})
+    dev = MixDevice(tr, {**BASE, "music": 0, "cn": -20})
     for _ in range(5):
         dev.render(4800)
     assert dev.covered
-    dev.set_volumes({**BASE, "music": 0.05, "cn": 0.1})
+    dev.set_volumes({**BASE, "music": -26, "cn": -20})
     for _ in range(10):
         dev.render(4800)
     assert not dev.covered
@@ -272,11 +283,11 @@ def test_audio_tab_feeds_the_preview(qapp, tmp_path):
     panel = gui.OptionsPanel()
     mp = panel.mix_preview
     assert not mp.btn.isEnabled()                       # no video selected
-    panel._sld_music.setValue(55)
+    panel._sld_music.setValue(-5)
     panel._chk_cn_voice.setChecked(False)
-    panel._sld_vi.setValue(150)
+    panel._sld_vi.setValue(4)
     v = panel._preview_volumes()
-    assert v["music"] == 0.55 and not v["cn_on"] and v["vi"] == 1.5
+    assert v["music"] == -5 and not v["cn_on"] and v["vi"] == 4
     assert v["bgm_on"] is False                         # no music file chosen
     panel.set_preview_source(tmp_path / "v.mp4", 125.0)
     assert mp.btn.isEnabled() and mp.pos.maximum() == 105

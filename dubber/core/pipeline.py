@@ -298,10 +298,9 @@ class Pipeline:
     def run_m5(
         self,
         input_path: Path,
-        orig_volume: float = 0.20,
-        vi_volume: float = 1.0,
-        music_volume: "float | None" = None,
-        cn_voice_volume: "float | None" = None,
+        vi_db: float = 0.0,
+        music_db: "float | None" = None,
+        cn_db: "float | None" = None,
         blur_region: tuple | None = None,
         blur_mode: str = "auto",
         blur_rect: "tuple | None" = None,
@@ -420,12 +419,16 @@ class Pipeline:
             active_blur_band = [(0.0, video_info.duration + 1.0, *box)] if box else None
 
         # ── Background audio track ────────────────────────────────────────────
+        # Levels in dB: each track is brought to levels.REF_LUFS first, then moved by its
+        # dB value — the same setting sounds the same in every video.
+        from dubber.core.audio import levels
         background_wav: Path | None = None
         effective_volume = 0.0
+        _music_db = levels.MUSIC_DB if music_db is None else music_db
+        _cn_db = levels.CN_DB if cn_db is None else cn_db
 
-        # Per-track volumes (fall back to orig_volume for CLI compat)
-        _music_vol = music_volume if music_volume is not None else orig_volume
-        _voice_vol = cn_voice_volume if cn_voice_volume is not None else orig_volume
+        def _gain(path: Path, db: float) -> float:
+            return levels.gain_for(levels.measure_file(path, self.ffmpeg), db)
 
         _cbs = on_progress or {}
         on_sep = _cbs.get("separate")
@@ -434,34 +437,40 @@ class Pipeline:
             effective_volume = 0.0
 
         elif keep_music and keep_cn_voice:
-            if abs(_music_vol - _voice_vol) < 0.01:
-                # Same volume: use original audio stream directly (no separation)
-                effective_volume = _music_vol if _music_vol > 0 else 0.20
+            if _music_db == _cn_db:
+                # Same level: use the original audio stream directly (no separation)
+                effective_volume = _gain(input_path, _music_db)
             else:
-                # Different volumes: separate both, mix at individual levels
+                # Different levels: separate both, mix at individual levels
                 vocals_wav, instrumental_wav = self.stems(input_path, on_sep)
                 background_wav = _mix_two_tracks(
-                    instrumental_wav, vocals_wav, _music_vol, _voice_vol,
-                    self.ffmpeg, self.job_dir,
+                    instrumental_wav, vocals_wav, _gain(instrumental_wav, _music_db),
+                    _gain(vocals_wav, _cn_db), self.ffmpeg, self.job_dir,
                 )
                 effective_volume = 1.0  # pre-scaled in background_wav
 
         elif keep_music:  # only music, not voice
             _, instrumental_wav = self.stems(input_path, on_sep)
             background_wav = instrumental_wav
-            effective_volume = _music_vol if _music_vol > 0 else 0.20
+            effective_volume = _gain(instrumental_wav, _music_db)
 
         else:  # only voice, not music
             vocals_wav, _ = self.stems(input_path, on_sep)
             background_wav = vocals_wav
-            effective_volume = _voice_vol if _voice_vol > 0 else 0.20
+            effective_volume = _gain(vocals_wav, _cn_db)
+
+        vi_volume = _gain(dub_wav, vi_db) if dub_wav else 1.0
+        log.info("Levels (dB): voice %+g, music %s, Chinese %s", vi_db,
+                 f"{_music_db:+g}" if keep_music else "off",
+                 f"{_cn_db:+g}" if keep_cn_voice else "off")
 
         logo_arg = _logo_arg(logo, w, h)
         music_arg = None
         if music and music.get("path") and Path(music["path"]).exists():
-            music_arg = (Path(music["path"]), max(0.0, music.get("volume", 30) / 100),
+            m_db = music.get("db", levels.BGM_DB)
+            music_arg = (Path(music["path"]), _gain(Path(music["path"]), m_db),
                          video_info.duration)
-            log.info("Your music: %s at %d%%", Path(music["path"]).name, music.get("volume", 30))
+            log.info("Your music: %s at %+g dB", Path(music["path"]).name, m_db)
         elif music and music.get("path"):
             log.warning("Music file missing — exported without it: %s", music["path"])
 

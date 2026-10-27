@@ -42,8 +42,8 @@ def test_import_rejects_files_without_audio(tmp_path, monkeypatch):
 def test_music_config_mapping(tmp_path):
     from dubber.app.gui import _bgm_of
     song = str(_tone(tmp_path / "s.mp3", 1))
-    on = {"bgm_on": True, "bgm_path": song, "bgm": 45}
-    assert _bgm_of(on) == {"path": song, "volume": 45}
+    on = {"bgm_on": True, "bgm_path": song, "bgm_db": -12}
+    assert _bgm_of(on) == {"path": song, "db": -12}
     assert _bgm_of({**on, "bgm_on": False}) is None
     assert _bgm_of({**on, "bgm_path": str(tmp_path / "gone.mp3")}) is None
     assert _bgm_of({}) is None
@@ -104,12 +104,12 @@ def test_music_option_in_the_audio_tab(tmp_path):
     assert a.get_config()["bgm_on"] is False and "Chưa chọn" in a._lbl_bgm_file.text()
     a._bgm_path, a._bgm_name = song, "Bài hát.mp3"
     a._chk_bgm.setChecked(True)
-    a._sld_bgm.setValue(55)
+    a._sld_bgm.setValue(-12)
     assert "Bài hát.mp3 · 1:15" in a._lbl_bgm_file.text()
     assert "nhạc của bạn" in a._hint.text()
     cfg = a.get_config()
-    assert (cfg["bgm_on"], cfg["bgm_path"], cfg["bgm"]) == (True, song, 55)
+    assert (cfg["bgm_on"], cfg["bgm_path"], cfg["bgm_db"]) == (True, song, -12)
     b = OptionsPanel()                                  # remembered like the logo
-    assert b.get_config()["bgm_path"] == song and b.get_config()["bgm"] == 55
+    assert b.get_config()["bgm_path"] == song and b.get_config()["bgm_db"] == -12
     b.set_config({k: v for k, v in cfg.items() if not k.startswith("bgm")})   # old config
     assert b.get_config()["bgm_on"] is False

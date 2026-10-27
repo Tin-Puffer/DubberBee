@@ -11,7 +11,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-DEFAULT_VOLUME = 30      # %
 FADE_OUT_S = 2.0
 EXTENSIONS = ("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus")
 

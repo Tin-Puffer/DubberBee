@@ -121,6 +121,8 @@ dubber/
     │   ├── fit.py           # TimingFitter: xếp câu TTS không đè nhau, nghỉ theo dấu câu, cắt im lặng,
     │   │                    # mọi câu về cùng độ to −14 dBFS (piper/VieNeu lệch ~7 dB) + limiter mềm,
     │   │                    # tăng tốc đều ≤1,15× (1 câu ≤1,3×), trễ ≤1,5s; câu quá dài → Groq rút gọn
+    │   ├── levels.py        # âm lượng theo dB: mỗi track đo LUFS (ebur128, cache) → đưa về −16 LUFS
+    │   │                    # rồi cộng dB của thanh trượt; mặc định Việt 0 / nhạc −26 / Trung tắt (−30) / nhạc bạn −20
     │   ├── mixer.py         # build_dub_wav(): ghép dub.wav đúng sample rate của giọng (không resample)
     │   ├── preview_mix.py   # Nghe thử: cắt 20s các track (cache job / tách riêng đoạn / câu mẫu TTS),
     │   │                    # trộn đúng quy tắc run_m5 (nhạc = tiếng Trung cùng mức → âm gốc…)
@@ -231,6 +233,7 @@ sửa `MODELS_MIRROR_URL`.
       thời gian còn lại, thông báo, ⚙ Cài đặt, ảnh xem trước phụ đề, nhớ cửa sổ/tab/hàng đợi
 - [x] Xuất kèm `<tên>_vi.txt` cạnh `<tên>_vi.mp4`: prompt ChatGPT (tiêu đề + mô tả + 5 hashtag + chữ ảnh bìa + bình luận ghim) đã ghép lời thoại
 - [x] Prompt AI (sửa bản dịch, TikTok) sửa được trong ⚙ Cài đặt, lưu `settings.json`, có ↺ Mặc định
+- [x] Âm lượng theo dB (mỗi track chuẩn hóa LUFS trước), mặc định theo kênh kể chuyện mẫu: Việt 0 / nhạc −26 / tắt tiếng Trung; prompt "Thủ công — nhờ AI" viết lại thành lời kể chuyện (phóng tác tiểu tiết, mỗi dòng một câu trọn, ~3,8 tiếng/giây)
 - [x] Bỏ dịch thủ công (cấu hình cũ `translator: manual` chạy như `auto`); bỏ mọi tự dọn cache
       (chỉ nút "Dọn cache"); lăn chuột không đổi giá trị ô chọn / ô số / thanh trượt
 - [x] Mỗi video một popup riêng: khi video đang chạy đã dịch xong, video chờ chạy cần dán bản

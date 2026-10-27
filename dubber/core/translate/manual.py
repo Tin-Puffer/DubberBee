@@ -13,30 +13,33 @@ import re
 from typing import List, Tuple
 
 MANUAL_PROMPT = """\
-Bạn là biên kịch lời thuyết minh phim Trung Quốc sang tiếng Việt, viết lời cho giọng đọc TTS và phụ đề video.
+Bạn viết lời kể chuyện tiếng Việt cho video TikTok tóm tắt phim Trung Quốc. Giọng đọc TTS sẽ đọc lời này trên đúng video gốc và hiện thành phụ đề.
 
-Bên dưới là lời thoại tiếng Trung do máy nghe chép lại. Mỗi dòng có thời gian xuất hiện chính xác trong video:
-[số] bắt đầu → kết thúc | câu tiếng Trung
-(thời gian dạng phút:giây.phần trăm giây, ví dụ 01:07.48)
+Đầu vào là lời thoại tiếng Trung máy nghe chép lại (có thể sai chữ — suy theo ngữ cảnh), mỗi dòng: [số] bắt đầu → kết thúc | câu tiếng Trung.
 
-NHIỆM VỤ: viết lời thuyết minh tiếng Việt cho cả video.
-1. Đọc hết trước để hiểu câu chuyện, nhân vật và ai nói với ai. Chữ Trung có thể sai hoặc thiếu do máy nghe — suy luận theo ngữ cảnh.
-2. Được phép GỘP nhiều dòng thành một câu, TÁCH một dòng dài thành nhiều câu, viết lại, rút gọn, lược chi tiết phụ — miễn câu tiếng Việt tự nhiên, trọn ý, như người Việt kể chuyện. Giữ đúng nội dung cốt lõi, không bịa tình tiết.
-3. TỰ ĐẶT THỜI GIAN cho từng câu tiếng Việt:
-   - Câu nói về đoạn nào thì đặt trong khoảng thời gian của đoạn tiếng Trung đó (gộp dòng: từ đầu dòng đầu đến cuối dòng cuối).
-   - Thời lượng phải đủ để đọc, khoảng 3–4 từ mỗi giây. Câu dài hơn chỗ trống thì rút gọn.
-   - Các câu không chồng giờ lên nhau, theo đúng thứ tự thời gian, không vượt quá độ dài video.
-   - Khoảng nghỉ do bạn quyết định bằng khoảng trống giữa hai câu: nghỉ ngắn (0,1–0,3 giây) trong mạch kể, nghỉ dài hơn khi chuyển cảnh hoặc sau câu gây bất ngờ. Đoạn không cần lời thì để trống.
-4. Giữ nhất quán tên riêng, thuật ngữ và xưng hô. Viết như lời đọc: không ký hiệu, không viết tắt.
-5. Đọc lại toàn bộ như đang nghe TTS: tự nhiên, liền mạch, không lặp ý, không câu cụt.
-6. Tránh từ dễ bị TikTok hạn chế: thay từ nhạy cảm bằng cách nói nhẹ hơn, từ đồng nghĩa hoặc tiếng lóng quen thuộc mà người Việt vẫn hiểu, ví dụ: xác / xác chết → thi thể, người đã khuất; chết → qua đời, ra đi, không qua khỏi; giết → ra tay, kết liễu, trừ khử; máu → vết đỏ; hiếp dâm / cưỡng hiếp → xâm hại; tự tử → làm chuyện dại dột; ma túy → hàng cấm; súng → vũ khí. Giữ đúng nghĩa câu chuyện. Không né bằng ký tự lạ, số hay viết tắt (như g!ết, ch3t) vì giọng đọc TTS không đọc được.
+VIẾT LẠI thành một mạch kể liền, không dịch từng câu:
+<noi_dung>
+- Chỉ cần giữ ý chính và tình tiết, đúng thứ tự diễn biến (không kể trước sự việc chưa xảy ra). Tiểu tiết được thay đổi, phóng tác tự do cho kịch tính và hợp với người xem Việt: lời thoại, cách diễn đạt, chi tiết nhỏ, cảm xúc, không khí — thêm, bớt hay đổi đều được.
+- Giữ ngôi kể gốc (truyện xưng "tôi" thì giữ "tôi"). Tên riêng, xưng hô cố định cả bài; tên có thể Việt hóa cho dễ nghe.
+</noi_dung>
+<van_phong>
+- Kể như người Việt kể chuyện cuốn hút: câu trôi, nối ý bằng dấu phẩy và từ nối ("rồi", "thế là", "vậy mà", "đúng lúc đó", "hóa ra"), nhấn vào chỗ bất ngờ.
+- Mỗi dòng là một câu trọn vẹn, kết thúc bằng dấu chấm, chấm hỏi hoặc chấm than — KHÔNG BAO GIỜ cắt một câu ra hai dòng hay kết thúc dòng bằng dấu phẩy: mỗi dòng được đọc riêng, câu bị cắt sẽ nghe đứt đoạn. Ví dụ sai: "…tôi lại gần thì thấy đất tơi xốp," / "dưới lớp đất còn có gì đó ngọ nguậy…" → đúng: một dòng "Tôi lại gần thì thấy đất tơi xốp đến lạ, dưới lớp đất còn có gì đó ngọ nguậy."
+- Độ dài dòng theo ý của câu, không theo dòng tiếng Trung: thường 5–12 giây, gộp nhiều dòng tiếng Trung. Tránh chuỗi câu cụt và lặp chủ ngữ đầu câu. Ví dụ: "Tôi chạy đi lấy ngay. Ông Bảy ấn đầu gà lên quan tài." → "Tôi vội chạy đi lấy, ông Bảy liền túm con gà ấn chặt đầu nó lên nắp quan tài."
+- Viết như lời đọc: không ký hiệu, không viết tắt.
+</van_phong>
+<dat_thoi_gian>
+- Thời gian tiếng Trung chỉ để biết cảnh nào diễn ra lúc nào — không cần khớp từng mốc. Câu được bắt đầu, kết thúc ở bất kỳ đâu, lệch 1–2 giây so với cảnh vẫn được, miễn câu chuyện trôi liền. Câu đầu bắt đầu từ đầu video, câu cuối kết thúc gần cuối video.
+- Lời phủ kín thời lượng: câu sau bắt đầu 0,1–0,2 giây sau khi câu trước kết thúc. Đoạn không có thoại vẫn kể tiếp không khí, cảm xúc của cùng cảnh. Chỉ để trống trên 1 giây ở vài khoảnh khắc gây sốc.
+- Giọng đọc khoảng 3,8 tiếng (âm tiết) mỗi giây: số tiếng mỗi câu ≈ thời lượng × 3,8 (5 giây ≈ 19 tiếng, 10 giây ≈ 38 tiếng). Giữ trong khoảng 3,4–4 tiếng/giây: thiếu thì có khoảng lặng, thừa thì máy phải đọc nhanh.
+- Không chồng giờ, đúng thứ tự, không vượt quá độ dài video.
+</dat_thoi_gian>
 
-ĐỊNH DẠNG TRẢ LỜI — làm đúng tuyệt đối:
-- Chỉ trả về MỘT khối code duy nhất, mở bằng ```text và đóng bằng ```.
-- Mỗi dòng là một câu tiếng Việt theo đúng mẫu:
-  [00:07.48 → 00:11.20] Câu tiếng Việt
-- Thời gian viết dạng phút:giây.phần trăm giây như đầu vào. Không ghi số thứ tự, không chép tiếng Trung.
-- Không viết gì bên ngoài khối code."""
+Trước khi trả lời, tự soát: đếm số tiếng từng câu so với thời lượng, khoảng trống giữa các câu, và đọc lại cả bài cho liền mạch.
+
+Chỉ trả về MỘT khối ```text, mỗi dòng một câu đúng mẫu (thời gian phút:giây.phần trăm giây, không số thứ tự, không tiếng Trung):
+[00:07.48 → 00:11.20] Câu tiếng Việt
+Không viết gì bên ngoài khối code."""
 
 _TIME = r"(?:\d+:)?\d{1,3}:\d{1,2}(?:[.,]\d+)?|\d+(?:[.,]\d+)?"
 _LINE = re.compile(

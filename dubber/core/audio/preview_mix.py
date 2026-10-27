@@ -4,7 +4,9 @@ prepare() cuts WINDOW_S seconds of every track the export can use (original audi
 Chinese-voice stems, Vietnamese voice, the user's own music) into float arrays — reusing
 the job cache when the video was already processed, else separating just that window and
 reading sample lines with the chosen voice. mix() then combines them by the same rules as
-VideoRenderer.render_final + Pipeline.run_m5, so moving a slider is heard at once.
+VideoRenderer.render_final + Pipeline.run_m5, so moving a slider is heard at once. Each
+track's loudness is measured (whole file when there is one, like the export) so the dB
+levels mean the same as in the export (core.audio.levels).
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ class PreviewTracks:
     arrays: Dict[str, np.ndarray] = field(default_factory=dict)   # name → (frames, 2)
     dub_source: str = ""               # "dub" (voice of the last run) | "lines" | "sample"
     stems_source: str = ""             # "cache" | "mdxnet" | "ffmpeg" | "" (none)
+    lufs: Dict[str, Optional[float]] = field(default_factory=dict)   # name → loudness
 
     def get(self, name: str) -> Optional[np.ndarray]:
         return self.arrays.get(name)
@@ -102,11 +105,13 @@ def prepare(video: Path, start: float, *, trim: tuple = (0.0, None), engine: str
 
     status("Đang cắt đoạn âm thanh…")
     tr.arrays["orig"] = decode(video, start, WINDOW_S)
+    files = {"orig": video}       # tracks measured on their whole file, as the export does
 
     sep = job / "separated" if job else None
     if sep and _cached_stems_usable(sep):
         tr.arrays["cn"] = decode(sep / "vocals.wav", start - offset, WINDOW_S)
         tr.arrays["music"] = decode(sep / "instrumental.wav", start - offset, WINDOW_S)
+        files.update(cn=sep / "vocals.wav", music=sep / "instrumental.wav")
         tr.stems_source = "cache"
     else:
         try:
@@ -118,6 +123,7 @@ def prepare(video: Path, start: float, *, trim: tuple = (0.0, None), engine: str
 
     if job and (job / "dub.wav").exists():
         tr.arrays["dub"] = decode(job / "dub.wav", start - offset, WINDOW_S)
+        files["dub"] = job / "dub.wav"
         tr.dub_source = "dub"
     else:
         status("Đang đọc câu mẫu bằng giọng đã chọn…")
@@ -132,8 +138,18 @@ def prepare(video: Path, start: float, *, trim: tuple = (0.0, None), engine: str
     if bgm_path and Path(bgm_path).exists():
         try:
             tr.arrays["bgm"] = _music_window(Path(bgm_path), start)
+            files["bgm"] = Path(bgm_path)
         except Exception as exc:
             log.warning("Preview music failed: %s", exc)
+
+    from dubber.core.audio import levels
+    status("Đang đo độ to các track…")
+    for name, a in tr.arrays.items():
+        try:
+            tr.lufs[name] = (levels.measure_file(files[name]) if name in files
+                             else levels.measure_array(a, SR))
+        except Exception as exc:
+            log.warning("Preview loudness of %s failed: %s", name, exc)
     return tr
 
 
@@ -249,34 +265,35 @@ def _music_window(path: Path, start: float) -> np.ndarray:
 # ── Mixing ────────────────────────────────────────────────────────────────────
 
 def track_gains(tr: PreviewTracks, v: dict) -> Dict[str, float]:
-    """Gain per track for GUI volumes *v* — run_m5's background rules:
+    """Gain per track for GUI levels *v* — run_m5's background rules:
 
-    music + Chinese voice at the same volume → the original track; at different volumes
-    → both stems; one of them → its stem. As in run_m5, a background that is on at 0 %
-    still plays at 20 %. Without stems the original track stands in.
+    music + Chinese voice at the same level → the original track; at different levels
+    → both stems; one of them → its stem. Without stems the original track stands in.
+    Each gain = the track brought to levels.REF_LUFS, then moved by its dB value.
 
-    v: {vi_on, vi, music_on, music, cn_on, cn, bgm_on, bgm} (volumes 0–1, vi up to 2).
+    v: {vi_on, vi, music_on, music, cn_on, cn, bgm_on, bgm} (levels in dB).
     """
-    g = dict.fromkeys(TRACKS, 0.0)
+    from dubber.core.audio import levels
+    db = dict.fromkeys(TRACKS)
     music_on, cn_on = v.get("music_on"), v.get("cn_on")
-    m, c = v.get("music", 0.0), v.get("cn", 0.0)
+    m, c = v.get("music", levels.MUSIC_DB), v.get("cn", levels.CN_DB)
     stems = tr.get("music") is not None and tr.get("cn") is not None
     if music_on and cn_on:
-        if abs(m - c) < 0.01 or not stems:
-            g["orig"] = m if m > 0 else 0.20
+        if m == c or not stems:
+            db["orig"] = m
         else:
-            g["music"], g["cn"] = m, c
+            db["music"], db["cn"] = m, c
     elif music_on or cn_on:
-        vol = (m if music_on else c) or 0.20
         if stems:
-            g["music" if music_on else "cn"] = vol
+            db["music" if music_on else "cn"] = m if music_on else c
         else:
-            g["orig"] = vol
+            db["orig"] = m if music_on else c
     if v.get("vi_on", True) and tr.get("dub") is not None:
-        g["dub"] = v.get("vi", 1.0)
+        db["dub"] = v.get("vi", levels.VI_DB)
     if v.get("bgm_on") and tr.get("bgm") is not None:
-        g["bgm"] = v.get("bgm", 0.0)
-    return g
+        db["bgm"] = v.get("bgm", levels.BGM_DB)
+    return {name: 0.0 if d is None else levels.gain_for(tr.lufs.get(name), d)
+            for name, d in db.items()}
 
 
 def mix(tr: PreviewTracks, gains: Dict[str, float], i: int = 0,

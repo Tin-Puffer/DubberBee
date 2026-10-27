@@ -31,7 +31,7 @@ def test_prompt_has_instructions_length_and_timed_chinese_lines():
 def test_default_prompt_allows_merging_and_own_timing():
     from dubber.core.translate.prompts import default_prompt
     p = default_prompt("manual")
-    assert "GỘP" in p and "TỰ ĐẶT THỜI GIAN" in p and "[00:07.48 → 00:11.20]" in p
+    assert "VIẾT LẠI" in p and "dat_thoi_gian" in p and "[00:07.48 → 00:11.20]" in p
 
 
 def test_reply_with_merged_lines_and_new_times():

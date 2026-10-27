@@ -86,6 +86,7 @@ def test_review_dialog_copies_with_the_saved_prompt(qapp):
 
 def test_translation_prompts_soften_words_tiktok_restricts():
     from dubber.core.translate.prompts import default_prompt
-    for kind in ("review", "review_timed", "manual"):
-        p = default_prompt(kind)
-        assert "TikTok hạn chế" in p and "giết → ra tay" in p and "TTS không đọc được" in p, kind
+    p = default_prompt("review")
+    assert "TikTok hạn chế" in p and "giết → ra tay" in p and "TTS không đọc được" in p
+    for kind in ("review_timed", "manual"):   # the storytelling script: no word filter
+        assert "TikTok hạn chế" not in default_prompt(kind), kind

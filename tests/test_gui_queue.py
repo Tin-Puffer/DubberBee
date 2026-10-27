@@ -176,14 +176,14 @@ def test_each_video_keeps_its_own_config(win, tmp_path):
     a, b = _videos(tmp_path, "a.mp4", "b.mp4")
     win._add_files([a, b])
     win._list.setCurrentRow(0)
-    win._opts._sld_vi.setValue(150)
+    win._opts._sld_vi.setValue(4)
     gui._select_data(win._export._combo_res, "-2:720")
     win._list.setCurrentRow(1)
-    win._opts._sld_vi.setValue(80)
+    win._opts._sld_vi.setValue(-3)
     win._list.setCurrentRow(0)  # switching back reloads a's config into the panels
-    assert win._opts._sld_vi.value() == 150
+    assert win._opts._sld_vi.value() == 4
     assert win._export.scale() == "-2:720"
-    assert win._jobs[1].opts["vi"] == 80
+    assert win._jobs[1].opts["vi_db"] == -3
     assert win._jobs[1].export["scale"] is None
 
 
@@ -194,14 +194,14 @@ def test_runs_sequentially_with_per_video_settings(win, tmp_path):
     a, bad, c = _videos(tmp_path, "a.mp4", "bad.mp4", "c.mp4")
     win._add_files([a, bad, c])
     win._list.setCurrentRow(2)
-    win._opts._sld_vi.setValue(120)
+    win._opts._sld_vi.setValue(3)
 
     win._start()
     _wait_idle(win)
 
     assert [r[0] for r in _FakeWorker.runs] == ["a.mp4", "bad.mp4", "c.mp4"]
-    assert _FakeWorker.runs[0][1]["vi_volume"] == 1.0
-    assert _FakeWorker.runs[2][1]["vi_volume"] == 1.2
+    assert _FakeWorker.runs[0][1]["vi_db"] == 0
+    assert _FakeWorker.runs[2][1]["vi_db"] == 3
     assert [j.status for j in win._jobs] == ["done", "error", "done"]  # error doesn't stop the queue
     assert win._jobs[0].output == out / "a_vi.mp4"
     assert (out / "c_vi.mp4").exists()
@@ -614,10 +614,10 @@ def test_queue_usable_again_after_run(win, tmp_path):
     assert win._opts.isEnabled() and win._export.isEnabled()      # unlocked after the run
     assert not win._btn_start.isEnabled()                          # nothing pending yet
 
-    win._opts._sld_vi.setValue(140)                                # edit the finished video …
+    win._opts._sld_vi.setValue(5)                                # edit the finished video …
     assert win._btn_rerun.isEnabled()
     win._rerun_selected()                                          # … and queue it again
-    assert win._jobs[0].status == "pending" and win._jobs[0].opts["vi"] == 140
+    assert win._jobs[0].status == "pending" and win._jobs[0].opts["vi_db"] == 5
     win._add_files([bad])                                          # re-adding requeues too
     assert win._jobs[1].status == "pending" and len(win._jobs) == 2
     assert win._btn_start.isEnabled()
@@ -626,7 +626,7 @@ def test_queue_usable_again_after_run(win, tmp_path):
     win._start()
     _wait_idle(win)
     assert [r[0] for r in _FakeWorker.runs] == ["a.mp4", "bad.mp4"]
-    assert _FakeWorker.runs[0][1]["vi_volume"] == 1.4
+    assert _FakeWorker.runs[0][1]["vi_db"] == 5
 
 
 # ── Cancel ────────────────────────────────────────────────────────────────────
@@ -751,9 +751,24 @@ def test_check_trim(monkeypatch, tmp_path, start, end, msg):
             gui.check_trim(tmp_path / "v.mp4", start, end)
 
 
-def test_default_volumes(win):
-    assert win._opts._sld_cn_voice.value() == 20
-    assert win._opts._sld_music.value() == 40
+def test_default_levels_db(win):
+    from dubber.core.audio import levels
+    assert win._opts._sld_vi.value() == levels.VI_DB == 0
+    assert win._opts._sld_music.value() == levels.MUSIC_DB
+    assert win._opts._sld_cn_voice.value() == levels.CN_DB
+    assert levels.CN_DB <= levels.MUSIC_DB < levels.VI_DB         # voice on top
+    assert win._opts._lbl_cn_vol.text() == "−30 dB"
+    assert not win._opts._chk_cn_voice.isChecked()
+
+
+def test_old_percent_configs_get_the_db_defaults(win, tmp_path):
+    from dubber.core.audio import levels
+    win._add_files(_videos(tmp_path, "a.mp4"))
+    cfg = {k: v for k, v in win._opts.get_config().items() if not k.endswith("_db")}
+    win._opts.set_config({**cfg, "vi": 150, "music": 96, "cn": 75})   # saved before dB
+    assert win._opts._sld_cn_voice.value() == levels.CN_DB
+    assert win._opts._sld_vi.value() == levels.VI_DB
+    assert gui._level({"cn": 75}, "cn") == levels.CN_DB
 
 
 @pytest.fixture
@@ -1047,7 +1062,7 @@ def test_no_prefetch_for_trimmed_or_same_file_or_no_separation(win, tmp_path, mo
     win._jobs[0].status = gui._Job.RUNNING
     nxt = win._jobs[1]
     for opts in ({"trim_on": True},
-                 {"asr_vocals": False, "music_on": True, "cn_on": True, "music": 30, "cn": 30}):
+                 {"asr_vocals": False, "music_on": True, "cn_on": True, "music_db": -10, "cn_db": -10}):
         saved = dict(nxt.opts)
         nxt.opts.update(opts)
         win._prefetch_next()
@@ -1060,10 +1075,10 @@ def test_no_prefetch_for_trimmed_or_same_file_or_no_separation(win, tmp_path, mo
 
 
 def test_needs_stems_follows_pipeline_rules():
-    base = {"asr_vocals": False, "music_on": True, "cn_on": True, "music": 40, "cn": 20}
+    base = {"asr_vocals": False, "music_on": True, "cn_on": True, "music_db": -14, "cn_db": -20}
     assert gui._needs_stems(dict(base, asr_vocals=True))
-    assert gui._needs_stems(base)                              # different volumes
-    assert not gui._needs_stems(dict(base, cn=40))             # same volume: original audio
+    assert gui._needs_stems(base)                              # different levels
+    assert not gui._needs_stems(dict(base, cn_db=-14))         # same level: original audio
     assert not gui._needs_stems(dict(base, music_on=False, cn_on=False))
     assert gui._needs_stems(dict(base, cn_on=False))           # music only
 

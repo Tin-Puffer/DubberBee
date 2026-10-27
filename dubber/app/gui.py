@@ -129,9 +129,9 @@ class PipelineWorker(QObject):
     def __init__(
         self,
         input_path: Path,
-        vi_volume: float = 1.0,
-        music_volume: float = 0.80,
-        cn_voice_volume: float = 0.50,
+        vi_db: float = 0.0,
+        music_db: "float | None" = None,     # None: the default (core.audio.levels)
+        cn_db: "float | None" = None,
         show_subtitles: bool = True,
         voice: str | None = None,
         keep_music: bool = True,
@@ -189,7 +189,7 @@ class PipelineWorker(QObject):
         self.portrait        = portrait      # 9:16 phone frame, blurred video behind
         self.brightness      = brightness    # % (−50 … +50)
         self.bg_brightness   = bg_brightness # % for the 9:16 background, None = default
-        self.music           = music         # {path, volume}: the user's own music
+        self.music           = music         # {path, db}: the user's own music
         self.tts_engine      = tts_engine
         self.skip_review     = skip_review
         self.sub_font        = sub_font
@@ -204,9 +204,9 @@ class PipelineWorker(QObject):
         self.blur_mode       = blur_mode
         self.blur_rect       = blur_rect
         self.sub_pos         = sub_pos
-        self.vi_volume       = vi_volume
-        self.music_volume    = music_volume
-        self.cn_voice_volume = cn_voice_volume
+        self.vi_db           = vi_db
+        self.music_db        = music_db
+        self.cn_db           = cn_db
         self.show_subtitles  = show_subtitles
         self.voice           = voice
         self.keep_music      = keep_music
@@ -242,7 +242,7 @@ class PipelineWorker(QObject):
         """What this job was run with (for error reports)."""
         keys = ("translator", "skip_review", "tts_engine", "voice", "asr_on_vocals", "sep_overlap",
                 "trim_start", "trim_end",
-                "vi_volume", "music_volume", "cn_voice_volume", "keep_music", "keep_cn_voice",
+                "vi_db", "music_db", "cn_db", "keep_music", "keep_cn_voice",
                 "show_subtitles", "scale", "fps", "crf", "encoder_preset", "audio_bitrate",
                 "blur_mode", "blur_pad", "sub_font", "sub_size", "sub_color",
                 "sub_outline_color", "sub_outline", "sub_box", "logo", "dub_voice", "flip",
@@ -430,9 +430,9 @@ class PipelineWorker(QObject):
 
             _, translate_json, _, _, output_mp4 = pipeline.run_m5(
                 input_path,
-                vi_volume=self.vi_volume,
-                music_volume=self.music_volume,
-                cn_voice_volume=self.cn_voice_volume,
+                vi_db=self.vi_db,
+                music_db=self.music_db,
+                cn_db=self.cn_db,
                 show_subtitles=self.show_subtitles,
                 blur_mode=self.blur_mode,
                 blur_rect=self.blur_rect,
@@ -885,16 +885,20 @@ def _select_data(combo: QComboBox, data) -> None:
 
 # ── Volume row helper ──────────────────────────────────────────────────────────
 
-def _make_vol_slider(parent, default: int = 20, max_val: int = 100) -> tuple:
-    """Return (slider, label) pair."""
+def _db_text(v: int) -> str:
+    return f"{v:+d} dB".replace("-", "−") if v else "0 dB"
+
+
+def _make_vol_slider(parent, default: int, rng: tuple) -> tuple:
+    """Return (slider, label) pair — the level in dB (levels.REF_LUFS + value)."""
     sld = QSlider(Qt.Horizontal, parent)
-    sld.setRange(0, max_val)
+    sld.setRange(*rng)
     sld.setValue(default)
-    lbl = QLabel(f"{default}%", parent)
-    lbl.setFixedWidth(38)
+    lbl = QLabel(_db_text(default), parent)
+    lbl.setFixedWidth(52)
     lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     lbl.setStyleSheet(f"color: {_TXT_MID}; font-size: 11px;")
-    sld.valueChanged.connect(lambda v: lbl.setText(f"{v}%"))
+    sld.valueChanged.connect(lambda v: lbl.setText(_db_text(v)))
     return sld, lbl
 
 
@@ -931,7 +935,8 @@ class OptionsPanel(QWidget):
 
         # ── Tab: Âm thanh ─────────────────────────────────────────────────────
         page_audio, form = _form_page(self)
-        self._sld_vi, self._lbl_vi_vol = _make_vol_slider(self, default=100, max_val=200)
+        from dubber.core.audio import levels as _lv
+        self._sld_vi, self._lbl_vi_vol = _make_vol_slider(self, _lv.VI_DB, _lv.VI_RANGE)
         self._sld_vi.setStyleSheet(
             f"QSlider::sub-page:horizontal {{ background: {_GREEN}; border-radius: 2px; }}"
             f"QSlider::handle:horizontal {{ background: {_GREEN}; width: 14px; height: 14px;"
@@ -950,24 +955,23 @@ class OptionsPanel(QWidget):
         self._chk_music = QCheckBox("Nhạc nền", self)
         self._chk_music.setChecked(True)
         self._chk_music.toggled.connect(self._on_audio_toggled)
-        self._sld_music, self._lbl_music_vol = _make_vol_slider(self, default=40)
+        self._sld_music, self._lbl_music_vol = _make_vol_slider(self, _lv.MUSIC_DB, _lv.BG_RANGE)
         self._sld_music.valueChanged.connect(self.sep_label_changed)
         form.addRow(self._chk_music, _hbox(self._sld_music, self._lbl_music_vol))
 
         self._chk_cn_voice = QCheckBox("Tiếng Trung", self)
-        self._chk_cn_voice.setChecked(True)
+        self._chk_cn_voice.setChecked(False)   # off by default: it fights the Vietnamese voice
         self._chk_cn_voice.toggled.connect(self._on_audio_toggled)
-        self._sld_cn_voice, self._lbl_cn_vol = _make_vol_slider(self, default=20)
+        self._sld_cn_voice, self._lbl_cn_vol = _make_vol_slider(self, _lv.CN_DB, _lv.BG_RANGE)
         self._sld_cn_voice.valueChanged.connect(self.sep_label_changed)
         form.addRow(self._chk_cn_voice, _hbox(self._sld_cn_voice, self._lbl_cn_vol))
 
-        from dubber.core.audio.music import DEFAULT_VOLUME as _BGM_VOL
         self._bgm_path: "str | None" = None
         self._bgm_name = ""
         self._chk_bgm = QCheckBox("Nhạc của bạn", self)
         self._chk_bgm.setToolTip("Nhạc từ máy bạn, trộn thêm vào video")
         self._chk_bgm.toggled.connect(self._on_audio_toggled)
-        self._sld_bgm, self._lbl_bgm_vol = _make_vol_slider(self, default=_BGM_VOL)
+        self._sld_bgm, self._lbl_bgm_vol = _make_vol_slider(self, _lv.BGM_DB, _lv.BG_RANGE)
         form.addRow(self._chk_bgm, _hbox(self._sld_bgm, self._lbl_bgm_vol))
         self._lbl_bgm_file = QLabel(self)
         self._lbl_bgm_file.setStyleSheet(f"color: {_TXT_MID}; font-size: 12px;")
@@ -1243,7 +1247,7 @@ class OptionsPanel(QWidget):
             length = ""
         return f"🎵 {self._bgm_name or Path(self._bgm_path).name}{length}"
 
-    _MUSIC_KEYS = ("bgm_on", "bgm_path", "bgm_name", "bgm")
+    _MUSIC_KEYS = ("bgm_on", "bgm_path", "bgm_name", "bgm_db")
 
     def _load_last_music(self) -> None:
         """The music used last time (settings.json "last_music"), like the logo."""
@@ -1256,9 +1260,9 @@ class OptionsPanel(QWidget):
         for w in (self._chk_bgm, self._sld_bgm):
             w.blockSignals(True)      # the audio hint isn't built yet; it refreshes after
         self._chk_bgm.setChecked(bool(last.get("bgm_on")))
-        if isinstance(last.get("bgm"), int):
-            self._sld_bgm.setValue(last["bgm"])
-            self._lbl_bgm_vol.setText(f"{last['bgm']}%")
+        if isinstance(last.get("bgm_db"), int):   # older "bgm" (%) → the default dB
+            self._sld_bgm.setValue(last["bgm_db"])
+            self._lbl_bgm_vol.setText(_db_text(last["bgm_db"]))
         for w in (self._chk_bgm, self._sld_bgm):
             w.blockSignals(False)
 
@@ -1484,13 +1488,13 @@ class OptionsPanel(QWidget):
         self._spin_size.setValue(size)
 
     def _preview_volumes(self) -> dict:
-        """The Audio tab as the mix preview takes it (volumes 0–1)."""
+        """The Audio tab as the mix preview takes it (levels in dB)."""
         bgm_file = bool(self._bgm_path) and Path(self._bgm_path).exists()
-        return {"vi_on": self._chk_vi.isChecked(), "vi": self._sld_vi.value() / 100,
-                "music_on": self._chk_music.isChecked(), "music": self._sld_music.value() / 100,
-                "cn_on": self._chk_cn_voice.isChecked(), "cn": self._sld_cn_voice.value() / 100,
+        return {"vi_on": self._chk_vi.isChecked(), "vi": self._sld_vi.value(),
+                "music_on": self._chk_music.isChecked(), "music": self._sld_music.value(),
+                "cn_on": self._chk_cn_voice.isChecked(), "cn": self._sld_cn_voice.value(),
                 "bgm_on": self._chk_bgm.isChecked() and bgm_file,
-                "bgm": self._sld_bgm.value() / 100}
+                "bgm": self._sld_bgm.value()}
 
     def _preview_context(self) -> "dict | None":
         """The selected video + the settings that change what the preview plays."""
@@ -1545,7 +1549,7 @@ class OptionsPanel(QWidget):
             msg = "Tắt hoàn toàn âm thanh gốc"
         if not vi:
             msg = ("Chỉ phụ đề: không lồng tiếng Việt, bỏ qua bước TTS (nhanh hơn) · phụ đề theo "
-                   "câu tiếng Trung · " + ("nên để Tiếng Trung 100% để nghe rõ tiếng gốc"
+                   "câu tiếng Trung · " + ("nên để Tiếng Trung 0 dB để nghe rõ tiếng gốc"
                                            if voice else msg[0].lower() + msg[1:]))
             if not (music or voice or (bgm and has_file)):
                 msg = "⚠ Không còn âm thanh nào — video xuất ra sẽ không có tiếng"
@@ -1561,22 +1565,14 @@ class OptionsPanel(QWidget):
         self._trim.setEnabled(checked)
 
     def _update_vi_label(self, v: int):
-        self._lbl_vi_vol.setText(f"{v}%")
-        if v > 100:
+        self._lbl_vi_vol.setText(_db_text(v))
+        if v > 0:
             self._lbl_vi_vol.setStyleSheet(f"color: {_AMBER}; font-size: 11px; font-weight: bold;")
         else:
             self._lbl_vi_vol.setStyleSheet(f"color: {_GREEN}; font-size: 11px; font-weight: bold;")
 
     # ── Getters ───────────────────────────────────────────────────────────────
 
-    def vi_volume(self) -> float:
-        return self._sld_vi.value() / 100.0
-
-    def music_volume(self) -> float:
-        return self._sld_music.value() / 100.0 if self._chk_music.isChecked() else 0.0
-
-    def cn_voice_volume(self) -> float:
-        return self._sld_cn_voice.value() / 100.0 if self._chk_cn_voice.isChecked() else 0.0
 
     def keep_music(self) -> bool:
         return self._chk_music.isChecked()
@@ -1810,16 +1806,16 @@ class OptionsPanel(QWidget):
 
     def get_config(self) -> dict:
         return {
-            "vi": self._sld_vi.value(),
+            "vi_db": self._sld_vi.value(),
             "vi_on": self._chk_vi.isChecked(),
             "bgm_on": self._chk_bgm.isChecked(),
             "bgm_path": self._bgm_path,
             "bgm_name": self._bgm_name,
-            "bgm": self._sld_bgm.value(),
+            "bgm_db": self._sld_bgm.value(),
             "music_on": self._chk_music.isChecked(),
-            "music": self._sld_music.value(),
+            "music_db": self._sld_music.value(),
             "cn_on": self._chk_cn_voice.isChecked(),
-            "cn": self._sld_cn_voice.value(),
+            "cn_db": self._sld_cn_voice.value(),
             "subs": self._chk_subs.isChecked(),
             "tts_engine": self.tts_engine(),
             "voice": self._combo_voice.currentData(),
@@ -1864,22 +1860,23 @@ class OptionsPanel(QWidget):
         self._spin_bg_bright.setValue(DEFAULT_BG_BRIGHTNESS)
 
     def set_config(self, cfg: dict) -> None:
-        self._sld_vi.setValue(cfg["vi"])
+        # Levels in dB; configs saved with % volumes ("vi", "music"…) get the defaults
+        from dubber.core.audio import levels as _lv
+        self._sld_vi.setValue(cfg.get("vi_db", _lv.VI_DB))
         self._chk_vi.setChecked(cfg.get("vi_on", True))   # .get(): older configs = voice on
-        from dubber.core.audio.music import DEFAULT_VOLUME as _BGM_VOL
         self._bgm_path, self._bgm_name = cfg.get("bgm_path"), cfg.get("bgm_name") or ""
         for w in (self._chk_bgm, self._sld_bgm):
             w.blockSignals(True)
         self._chk_bgm.setChecked(bool(cfg.get("bgm_on")))
-        self._sld_bgm.setValue(cfg.get("bgm", _BGM_VOL))
-        self._lbl_bgm_vol.setText(f"{self._sld_bgm.value()}%")
+        self._sld_bgm.setValue(cfg.get("bgm_db", _lv.BGM_DB))
+        self._lbl_bgm_vol.setText(_db_text(self._sld_bgm.value()))
         for w in (self._chk_bgm, self._sld_bgm):
             w.blockSignals(False)
         self._on_audio_toggled()      # file label + hint for this video's music
         self._chk_music.setChecked(cfg["music_on"])
-        self._sld_music.setValue(cfg["music"])
+        self._sld_music.setValue(cfg.get("music_db", _lv.MUSIC_DB))
         self._chk_cn_voice.setChecked(cfg["cn_on"])
-        self._sld_cn_voice.setValue(cfg["cn"])
+        self._sld_cn_voice.setValue(cfg.get("cn_db", _lv.CN_DB))
         self._chk_subs.setChecked(cfg["subs"])
         # tts_engine: .get() so configs saved before VieNeu still load (Piper)
         engine = cfg.get("tts_engine", "piper")
@@ -2287,11 +2284,19 @@ _STEPS = [
 
 def _bgm_of(o: dict) -> "dict | None":
     """Per-video config → run_m5's music argument (None: off, no file, or file gone)."""
-    from dubber.core.audio.music import DEFAULT_VOLUME
+    from dubber.core.audio.levels import BGM_DB
     path = o.get("bgm_path")
     if not (o.get("bgm_on") and path and Path(path).exists()):
         return None
-    return {"path": path, "volume": o.get("bgm", DEFAULT_VOLUME)}
+    return {"path": path, "db": o.get("bgm_db", BGM_DB)}
+
+
+def _level(o: dict, track: str) -> int:
+    """A track's level (dB) in a per-video config; configs saved with % volumes: default."""
+    from dubber.core.audio import levels
+    default = {"vi": levels.VI_DB, "music": levels.MUSIC_DB, "cn": levels.CN_DB,
+               "bgm": levels.BGM_DB}[track]
+    return o.get(f"{track}_db", default)
 
 
 def _sep_overlap_of(o: dict) -> float:
@@ -2307,7 +2312,7 @@ def _needs_stems(o: dict) -> bool:
     if o.get("asr_vocals", True):
         return True
     if o["music_on"] and o["cn_on"]:
-        return abs(o["music"] - o["cn"]) >= 1
+        return _level(o, "music") != _level(o, "cn")
     return o["music_on"] or o["cn_on"]
 
 
@@ -3368,11 +3373,11 @@ class MainWindow(QWidget):
         o, e = job.opts, job.export
         return PipelineWorker(
             job.path,
-            vi_volume=o["vi"] / 100.0,
+            vi_db=_level(o, "vi"),
             dub_voice=o.get("vi_on", True),
             music=_bgm_of(o),
-            music_volume=o["music"] / 100.0 if o["music_on"] else 0.0,
-            cn_voice_volume=o["cn"] / 100.0 if o["cn_on"] else 0.0,
+            music_db=_level(o, "music"),
+            cn_db=_level(o, "cn"),
             show_subtitles=o["subs"],
             voice=o["voice"],
             keep_music=o["music_on"],
