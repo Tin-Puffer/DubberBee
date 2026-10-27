@@ -1,4 +1,4 @@
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 # Public repo the installed app reads: its releases hold the app zips (in-app update) and the
 # models mirror (first-run download). The code repo can be private without breaking either.
