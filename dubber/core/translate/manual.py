@@ -29,13 +29,13 @@ VIẾT LẠI thành một mạch kể liền, không dịch từng câu:
 - Viết như lời đọc: không ký hiệu, không viết tắt.
 </van_phong>
 <dat_thoi_gian>
-- Thời gian tiếng Trung chỉ để biết cảnh nào diễn ra lúc nào — không cần khớp từng mốc. Câu được bắt đầu, kết thúc ở bất kỳ đâu, lệch 1–2 giây so với cảnh vẫn được, miễn câu chuyện trôi liền. Câu đầu bắt đầu từ đầu video, câu cuối kết thúc gần cuối video.
-- Lời phủ kín thời lượng: câu sau bắt đầu 0,1–0,2 giây sau khi câu trước kết thúc. Đoạn không có thoại vẫn kể tiếp không khí, cảm xúc của cùng cảnh. Chỉ để trống trên 1 giây ở vài khoảnh khắc gây sốc.
+- NEO GIỜ THEO SỰ VIỆC: câu kể sự việc nào thì bắt đầu lệch tối đa 1 giây so với dòng tiếng Trung nhắc tới sự việc đó (không cần khớp ranh giới từng dòng tiếng Trung). Lời kể KHÔNG ĐƯỢC chậm dần so với hình: chi tiết phóng tác làm sự việc sau bị đẩy muộn thì cắt bớt. Khớp hình quan trọng hơn kín lời. Câu đầu bắt đầu từ đầu video, câu cuối kết thúc gần cuối video.
+- Trong giới hạn neo giờ, lời phủ kín thời lượng: câu sau bắt đầu 0,1–0,2 giây sau khi câu trước kết thúc. Đoạn không có thoại vẫn kể tiếp không khí, cảm xúc của cùng cảnh. Chỉ để trống trên 1 giây ở vài khoảnh khắc gây sốc.
 - Giọng đọc khoảng 3,8 tiếng (âm tiết) mỗi giây: số tiếng mỗi câu ≈ thời lượng × 3,8 (5 giây ≈ 19 tiếng, 10 giây ≈ 38 tiếng). Giữ trong khoảng 3,4–4 tiếng/giây: thiếu thì có khoảng lặng, thừa thì máy phải đọc nhanh.
 - Không chồng giờ, đúng thứ tự, không vượt quá độ dài video.
 </dat_thoi_gian>
 
-Trước khi trả lời, tự soát: đếm số tiếng từng câu so với thời lượng, khoảng trống giữa các câu, và đọc lại cả bài cho liền mạch.
+Trước khi trả lời, tự soát: giờ bắt đầu từng câu so với dòng tiếng Trung của sự việc đó (lệch ≤ 1 giây, nhất là cuối video), số tiếng từng câu so với thời lượng, khoảng trống giữa các câu, và đọc lại cả bài cho liền mạch.
 
 Chỉ trả về MỘT khối ```text, mỗi dòng một câu đúng mẫu (thời gian phút:giây.phần trăm giây, không số thứ tự, không tiếng Trung):
 [00:07.48 → 00:11.20] Câu tiếng Việt
